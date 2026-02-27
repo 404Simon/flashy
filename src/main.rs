@@ -3,7 +3,7 @@
 #[tokio::main]
 async fn main() {
     use axum::Router;
-    use axum::routing::post;
+    use axum::routing::{get, post};
     use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use flashy::{
@@ -12,7 +12,7 @@ async fn main() {
         db::init_db,
         features::{
             auth::utils::ensure_admin_user,
-            projects::handlers::upload_project_file,
+            projects::handlers::{get_project_pdf, upload_project_file},
             projects::storage::{build_minio_client, MinioSettings},
         },
     };
@@ -89,6 +89,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/projects/{project_id}/upload", post(upload_project_file))
+        .route(
+            "/api/projects/{project_id}/files/{file_id}/pdf",
+            get(get_project_pdf),
+        )
         .leptos_routes_with_context(
             &app_state,
             routes,

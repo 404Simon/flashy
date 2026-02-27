@@ -12,7 +12,9 @@ use crate::features::{
         models::UserSession,
     },
     invites::handlers::{list_invites, CreateInvite},
-    projects::handlers::{get_project, list_project_files, list_projects, CreateProject},
+    projects::handlers::{
+        get_project, get_project_file_text, list_project_files, list_projects, CreateProject,
+    },
 };
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -462,8 +464,38 @@ fn ProjectDetailPage() -> impl IntoView {
     });
 
     let uploaded = move || query.with(|q| q.get("uploaded").is_some());
+    let selected_file_id = RwSignal::new(None::<i64>);
+    let pdf_modal_url = RwSignal::new(None::<String>);
+
+    let text_resource = LocalResource::new(move || {
+        let file_id = selected_file_id.get();
+        async move {
+            match file_id {
+                Some(id) => get_project_file_text(id).await,
+                None => Ok(String::new()),
+            }
+        }
+    });
+
+    let open_text_modal = move |file_id: i64| {
+        pdf_modal_url.set(None);
+        selected_file_id.set(Some(file_id));
+    };
+
+    let open_pdf_modal = move |project_id: i64, file_id: i64| {
+        selected_file_id.set(None);
+        pdf_modal_url.set(Some(format!(
+            "/api/projects/{project_id}/files/{file_id}/pdf"
+        )));
+    };
+
+    let close_modals = move || {
+        selected_file_id.set(None);
+        pdf_modal_url.set(None);
+    };
 
     view! {
+        <>
         <section class="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-16">
             <Show
                 when=move || user.get().is_some()
@@ -550,13 +582,28 @@ fn ProjectDetailPage() -> impl IntoView {
                                                             let preview = file.text_preview.clone().unwrap_or_default();
                                                             let has_preview = !preview.trim().is_empty();
                                                             view! {
-                                                                <li class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                                                                <li
+                                                                    class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 transition hover:border-slate-700 hover:bg-slate-900/70"
+                                                                    on:click=move |_| {
+                                                                        open_text_modal(file.id);
+                                                                    }
+                                                                >
                                                                     <div class="flex items-start justify-between gap-3">
                                                                         <div>
                                                                             <p class="text-sm font-semibold text-white">{file.original_filename}</p>
                                                                             <p class="text-xs text-slate-500">{format!("{} • {}", format_bytes(file.file_size), file.created_at)}</p>
                                                                         </div>
-                                                                        <span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">"PDF"</span>
+                                                                        <button
+                                                                            class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-400"
+                                                                            on:click=move |ev| {
+                                                                                ev.stop_propagation();
+                                                                                if let Some(project_id) = project_id_signal.get() {
+                                                                                    open_pdf_modal(project_id, file.id);
+                                                                                }
+                                                                            }
+                                                                        >
+                                                                            "PDF"
+                                                                        </button>
                                                                     </div>
                                                                     {if has_preview {
                                                                         view! {
@@ -588,6 +635,78 @@ fn ProjectDetailPage() -> impl IntoView {
                 </Show>
             </Show>
         </section>
+
+        <Show when=move || pdf_modal_url.get().is_some()>
+            {move || match pdf_modal_url.get() {
+                Some(url) => view! {
+                    <div
+                        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-6"
+                        on:click=move |_| close_modals()
+                    >
+                        <div
+                            class="w-full max-w-5xl rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl"
+                            on:click=move |ev| ev.stop_propagation()
+                        >
+                            <div class="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+                                <p class="text-sm font-semibold text-white">"PDF Preview"</p>
+                                <button
+                                    class="rounded-full border border-slate-700 px-4 py-1 text-xs text-slate-300 hover:border-slate-400"
+                                    on:click=move |_| close_modals()
+                                >
+                                    "Close"
+                                </button>
+                            </div>
+                            <div class="h-[70vh] w-full bg-slate-900">
+                                <iframe class="h-full w-full" src=url title="PDF preview"></iframe>
+                            </div>
+                        </div>
+                    </div>
+                }.into_any(),
+                None => view! { <span></span> }.into_any(),
+            }}
+        </Show>
+
+        <Show when=move || selected_file_id.get().is_some()>
+            <div
+                class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-6"
+                on:click=move |_| close_modals()
+            >
+                <div
+                    class="w-full max-w-3xl rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl"
+                    on:click=move |ev| ev.stop_propagation()
+                >
+                    <div class="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+                        <p class="text-sm font-semibold text-white">"Extracted text"</p>
+                        <button
+                            class="rounded-full border border-slate-700 px-4 py-1 text-xs text-slate-300 hover:border-slate-400"
+                            on:click=move |_| close_modals()
+                        >
+                            "Close"
+                        </button>
+                    </div>
+                    <div class="max-h-[70vh] overflow-auto px-6 py-4">
+                        <Show
+                            when=move || text_resource.get().is_some()
+                            fallback=move || view! { <p class="text-sm text-slate-400">"Loading text..."</p> }
+                        >
+                            {move || match text_resource.get() {
+                                Some(Ok(text)) if text.trim().is_empty() => view! {
+                                    <p class="text-sm text-slate-400">"No extractable text found."</p>
+                                }.into_any(),
+                                Some(Ok(text)) => view! {
+                                    <pre class="whitespace-pre-wrap text-sm text-slate-200">{text}</pre>
+                                }.into_any(),
+                                Some(Err(err)) => view! {
+                                    <p class="text-sm text-rose-300">{err.to_string()}</p>
+                                }.into_any(),
+                                None => view! { <span></span> }.into_any(),
+                            }}
+                        </Show>
+                    </div>
+                </div>
+            </div>
+        </Show>
+        </>
     }
 }
 

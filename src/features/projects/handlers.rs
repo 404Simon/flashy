@@ -180,6 +180,86 @@ pub async fn list_project_files(project_id: i64) -> Result<Vec<ProjectFile>, Ser
         .collect())
 }
 
+#[server(GetProjectFileText)]
+pub async fn get_project_file_text(file_id: i64) -> Result<String, ServerFnError> {
+    use sqlx::SqlitePool;
+
+    let user = require_auth().await?;
+    let pool = expect_context::<SqlitePool>();
+
+    let row = sqlx::query!(
+        r#"
+        SELECT CAST(COALESCE(pf.extracted_text, '') AS TEXT) as "extracted_text!: String"
+        FROM project_files pf
+        INNER JOIN study_projects sp ON sp.id = pf.project_id
+        WHERE pf.id = ? AND sp.user_id = ?
+        "#,
+        file_id,
+        user.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("File not found"))?;
+
+    Ok(row.extracted_text)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn get_project_pdf(
+    axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
+    axum::extract::Path((project_id, file_id)): axum::extract::Path<(i64, i64)>,
+    session: tower_sessions::Session,
+) -> Result<axum::response::Response, (axum::http::StatusCode, String)> {
+    use axum::response::IntoResponse;
+    use sqlx::SqlitePool;
+
+    use crate::features::auth::utils::get_user_from_session;
+
+    let user = get_user_from_session(&session)
+        .await
+        .ok_or((axum::http::StatusCode::UNAUTHORIZED, "Not authenticated".to_string()))?;
+
+    let pool: &SqlitePool = &state.db_pool;
+    let row = sqlx::query!(
+        r#"
+        SELECT pf.s3_key as "s3_key!: String", pf.s3_bucket as "s3_bucket!: String"
+        FROM project_files pf
+        INNER JOIN study_projects sp ON sp.id = pf.project_id
+        WHERE pf.id = ? AND pf.project_id = ? AND sp.user_id = ?
+        "#,
+        file_id,
+        project_id,
+        user.id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        axum::http::StatusCode::NOT_FOUND,
+        "File not found".to_string(),
+    ))?;
+
+    let object = state
+        .minio_client
+        .objects()
+        .get(&row.s3_bucket, &row.s3_key)
+        .send()
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let bytes = object
+        .bytes()
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/pdf")],
+        bytes,
+    )
+        .into_response())
+}
+
 #[cfg(feature = "ssr")]
 pub async fn upload_project_file(
     axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
