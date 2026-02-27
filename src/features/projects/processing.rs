@@ -1,30 +1,44 @@
 #[cfg(feature = "ssr")]
-use std::{io::Write, process::Command};
+use std::{path::Path, process::Stdio, time::Duration};
 
 #[cfg(feature = "ssr")]
-pub async fn extract_text_with_pdftotext(pdf_bytes: Vec<u8>) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let mut temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| format!("Failed to create temp file: {e}"))?;
-        temp_file
-            .write_all(&pdf_bytes)
-            .map_err(|e| format!("Failed to write temp file: {e}"))?;
+pub const MAX_PDF_BYTES: u64 = 20 * 1024 * 1024;
+#[cfg(feature = "ssr")]
+const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(20);
 
-        let output = Command::new("pdftotext")
-            .arg("-layout")
-            .arg("-q")
-            .arg(temp_file.path())
-            .arg("-")
-            .output()
-            .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
+#[cfg(feature = "ssr")]
+pub async fn extract_text_with_pdftotext(
+    pdf_path: &Path,
+    pdf_size: u64,
+) -> Result<String, String> {
+    if pdf_size > MAX_PDF_BYTES {
+        return Err("Uploaded PDF exceeded the size limit".to_string());
+    }
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("pdftotext failed: {stderr}"));
-        }
+    let mut command = tokio::process::Command::new("pdftotext");
+    command
+        .arg("-layout")
+        .arg("-q")
+        .arg(pdf_path)
+        .arg("-")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    })
-    .await
-    .map_err(|e| format!("Failed to join pdftotext task: {e}"))?
+    let child = command
+        .spawn()
+        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
+
+    let output = tokio::time::timeout(PDFTOTEXT_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| "pdftotext timed out".to_string())?
+        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("pdftotext failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

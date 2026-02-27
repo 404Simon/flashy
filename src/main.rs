@@ -3,6 +3,7 @@
 async fn main() {
     use axum::routing::{get, post};
     use axum::Router;
+    use axum::extract::DefaultBodyLimit;
     use flashy::{
         app::*,
         app_state::AppState,
@@ -10,6 +11,7 @@ async fn main() {
         features::{
             auth::utils::ensure_admin_user,
             projects::handlers::{get_project_pdf, upload_project_file},
+            projects::processing::MAX_PDF_BYTES,
             projects::storage::{build_minio_client, MinioSettings},
         },
     };
@@ -89,7 +91,7 @@ async fn main() {
     let app = Router::new()
         .route(
             "/api/projects/{project_id}/upload",
-            post(upload_project_file),
+            post(upload_project_file).layer(DefaultBodyLimit::max(MAX_PDF_BYTES as usize)),
         )
         .route(
             "/api/projects/{project_id}/files/{file_id}/pdf",

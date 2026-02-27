@@ -4,7 +4,11 @@ pub async fn get_project_pdf(
     axum::extract::Path((project_id, file_id)): axum::extract::Path<(i64, i64)>,
     session: tower_sessions::Session,
 ) -> Result<axum::response::Response, (axum::http::StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+    use axum::http::HeaderValue;
     use axum::response::IntoResponse;
+    use futures_util::TryStreamExt;
     use sqlx::SqlitePool;
 
     use crate::features::auth::utils::get_user_from_session;
@@ -42,16 +46,41 @@ pub async fn get_project_pdf(
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    let bytes = object
-        .bytes()
-        .await
-        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let content_type = object
+        .content_type
+        .clone()
+        .unwrap_or_else(|| "application/pdf".to_string());
+    let content_length = object.content_length;
+    let body = Body::from_stream(
+        object
+            .body
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+    );
 
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/pdf")],
-        bytes,
-    )
-        .into_response())
+    let mut response = body.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid content type".to_string(),
+            )
+        })?,
+    );
+    if let Some(length) = content_length {
+        headers.insert(
+            CONTENT_LENGTH,
+            HeaderValue::from_str(&length.to_string()).map_err(|_| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid content length".to_string(),
+                )
+            })?,
+        );
+    }
+
+    Ok(response)
 }
 
 #[cfg(feature = "ssr")]
@@ -61,10 +90,13 @@ pub async fn upload_project_file(
     session: tower_sessions::Session,
     mut multipart: axum::extract::Multipart,
 ) -> Result<axum::response::Redirect, (axum::http::StatusCode, String)> {
+    use tokio::io::AsyncWriteExt;
+    use tokio_util::io::ReaderStream;
+
     use sqlx::SqlitePool;
 
     use crate::features::auth::utils::get_user_from_session;
-    use crate::features::projects::processing::extract_text_with_pdftotext;
+    use crate::features::projects::processing::{extract_text_with_pdftotext, MAX_PDF_BYTES};
 
     let user = get_user_from_session(&session).await.ok_or((
         axum::http::StatusCode::UNAUTHORIZED,
@@ -90,9 +122,10 @@ pub async fn upload_project_file(
 
     let mut file_name = None;
     let mut content_type = None;
-    let mut file_bytes = None;
+    let mut temp_path: Option<tempfile::TempPath> = None;
+    let mut file_size: u64 = 0;
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?
@@ -113,12 +146,37 @@ pub async fn upload_project_file(
                 .unwrap_or("application/octet-stream")
                 .to_string(),
         );
-        file_bytes = Some(
-            field
-                .bytes()
+
+        let temp_file = tempfile::NamedTempFile::with_suffix(".pdf")
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let (temp_std_file, temp_path_handle) = temp_file.into_parts();
+        let mut temp_file = tokio::fs::File::from_std(temp_std_file);
+
+        while let Some(chunk) = field
+            .chunk()
+            .await
+            .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?
+        {
+            file_size = file_size.saturating_add(chunk.len() as u64);
+            if file_size > MAX_PDF_BYTES {
+                return Err((
+                    axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                    format!(
+                        "Uploaded file exceeded the {} MB limit",
+                        MAX_PDF_BYTES / (1024 * 1024)
+                    ),
+                ));
+            }
+            temp_file
+                .write_all(&chunk)
                 .await
-                .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?,
-        );
+                .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+        }
+        temp_file
+            .flush()
+            .await
+            .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+        temp_path = Some(temp_path_handle);
         break;
     }
 
@@ -127,7 +185,7 @@ pub async fn upload_project_file(
         "Missing file upload".to_string(),
     ))?;
     let content_type = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    let bytes = file_bytes.ok_or((
+    let temp_path = temp_path.ok_or((
         axum::http::StatusCode::BAD_REQUEST,
         "Missing file upload".to_string(),
     ))?;
@@ -147,15 +205,16 @@ pub async fn upload_project_file(
         ));
     }
 
-    if bytes.is_empty() {
+    if file_size == 0 {
         return Err((
             axum::http::StatusCode::BAD_REQUEST,
             "Uploaded file was empty".to_string(),
         ));
     }
 
-    let file_size = bytes.len() as i64;
-    let extracted_text = extract_text_with_pdftotext(bytes.to_vec())
+    let temp_path_buf =
+        <tempfile::TempPath as AsRef<std::path::Path>>::as_ref(&temp_path).to_path_buf();
+    let extracted_text = extract_text_with_pdftotext(&temp_path_buf, file_size)
         .await
         .map_err(|e| (axum::http::StatusCode::UNPROCESSABLE_ENTITY, e))?;
 
@@ -168,16 +227,22 @@ pub async fn upload_project_file(
         sanitized_name
     );
 
+    let upload_file = tokio::fs::File::open(&temp_path_buf)
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+    let upload_stream = ReaderStream::new(upload_file);
+
     state
         .minio_client
         .objects()
         .put(state.bucket_name.as_str(), &key)
         .content_type("application/pdf")
-        .body_bytes(bytes)
+        .body_stream_sized(upload_stream, file_size)
         .send()
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
 
+    let file_size_i64 = file_size as i64;
     sqlx::query!(
         r#"
         INSERT INTO project_files
@@ -188,7 +253,7 @@ pub async fn upload_project_file(
         project_id,
         file_name,
         content_type,
-        file_size,
+        file_size_i64,
         state.bucket_name,
         key,
         extracted_text
