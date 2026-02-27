@@ -1,0 +1,8 @@
+{
+  "name": "flashy",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "^4.1.18"
+  }
+}

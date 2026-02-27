@@ -12,3 +12,13 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# node
+node_modules/
+
+# db
+flashy.db
+flashy.db-wal
+flashy.db-shm
+
+.env

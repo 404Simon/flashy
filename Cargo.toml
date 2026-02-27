@@ -15,6 +15,16 @@ leptos_axum = { version = "0.8.0", optional = true }
 leptos_meta = { version = "0.8.0" }
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 wasm-bindgen = { version = "0.2.106", optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"], default-features = false, optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+dotenvy = { version = "0.15", optional = true }
+serde = { version = "1", features = ["derive"] }
+bcrypt = { version = "0.18", optional = true }
+tower-sessions = { version = "0.14", optional = true }
+tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], default-features = false, optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
 
 [features]
 hydrate = [
@@ -26,6 +36,15 @@ ssr = [
     "dep:axum",
     "dep:tokio",
     "dep:leptos_axum",
+    "dep:sqlx",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:dotenvy",
+    "dep:bcrypt",
+    "dep:tower-sessions",
+    "dep:tower-sessions-sqlx-store",
+    "dep:uuid",
+    "dep:time",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
@@ -50,8 +69,8 @@ site-root = "target/site"
 # Defaults to pkg
 site-pkg-dir = "pkg"
 
-# [Optional] The source CSS file. If it ends with .sass or .scss then it will be compiled by dart-sass into CSS. The CSS is optimized by Lightning CSS before being written to <site-root>/<site-pkg>/app.css
-style-file = "style/main.scss"
+# The tailwind input file - this will be the main CSS file
+tailwind-input-file = "style/main.css"
 # Assets source dir. All files found here will be copied and synchronized to site-root.
 # The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
 #
