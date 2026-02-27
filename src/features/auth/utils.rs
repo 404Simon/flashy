@@ -59,10 +59,8 @@ pub async fn ensure_admin_user(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Erro
         return Ok(());
     }
 
-    let admin_username =
-        std::env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
-    let admin_password =
-        std::env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".to_string());
+    let admin_username = std::env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
+    let admin_password = std::env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".to_string());
     let admin_email = std::env::var("ADMIN_EMAIL").ok();
 
     let password_hash = hash_password(&admin_password)

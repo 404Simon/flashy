@@ -4,11 +4,13 @@ use leptos_axum::extract;
 #[cfg(feature = "ssr")]
 use tower_sessions::Session;
 
-use super::models::UserSession;
 #[cfg(feature = "ssr")]
 use super::models::User;
+use super::models::UserSession;
 #[cfg(feature = "ssr")]
-use super::utils::{clear_session, get_user_from_session, hash_password, set_user_in_session, verify_password};
+use super::utils::{
+    clear_session, get_user_from_session, hash_password, set_user_in_session, verify_password,
+};
 
 #[server(RegisterUser)]
 pub async fn register_user(

@@ -1,11 +1,8 @@
-
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
-    use axum::Router;
     use axum::routing::{get, post};
-    use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use axum::Router;
     use flashy::{
         app::*,
         app_state::AppState,
@@ -16,6 +13,8 @@ async fn main() {
             projects::storage::{build_minio_client, MinioSettings},
         },
     };
+    use leptos::prelude::*;
+    use leptos_axum::{generate_route_list, LeptosRoutes};
     use time::Duration;
     use tower_sessions::{Expiry, SessionManagerLayer};
     use tower_sessions_sqlx_store::SqliteStore;
@@ -88,7 +87,10 @@ async fn main() {
     };
 
     let app = Router::new()
-        .route("/api/projects/{project_id}/upload", post(upload_project_file))
+        .route(
+            "/api/projects/{project_id}/upload",
+            post(upload_project_file),
+        )
         .route(
             "/api/projects/{project_id}/files/{file_id}/pdf",
             get(get_project_pdf),

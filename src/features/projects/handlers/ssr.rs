@@ -1,210 +1,3 @@
-use leptos::prelude::*;
-
-use super::models::{Project, ProjectFile, ProjectSummary};
-#[cfg(feature = "ssr")]
-use crate::features::auth::utils::require_auth;
-
-#[server(CreateProject)]
-pub async fn create_project(
-    name: String,
-    description: Option<String>,
-) -> Result<Project, ServerFnError> {
-    use sqlx::SqlitePool;
-
-    let user = require_auth().await?;
-    let name = name.trim().to_string();
-
-    if name.len() < 3 {
-        return Err(ServerFnError::new(
-            "Project name must be at least 3 characters",
-        ));
-    }
-
-    let description = description
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty());
-
-    let pool = expect_context::<SqlitePool>();
-
-    let result = sqlx::query!(
-        "INSERT INTO study_projects (user_id, name, description) VALUES (?, ?, ?)",
-        user.id,
-        name,
-        description
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let project_id = result.last_insert_rowid();
-
-    let project = sqlx::query_as!(
-        Project,
-        r#"
-        SELECT id, user_id, name, description, created_at, updated_at
-        FROM study_projects
-        WHERE id = ?
-        "#,
-        project_id
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(project)
-}
-
-#[server(ListProjects)]
-pub async fn list_projects() -> Result<Vec<ProjectSummary>, ServerFnError> {
-    use sqlx::SqlitePool;
-
-    let user = require_auth().await?;
-    let pool = expect_context::<SqlitePool>();
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            sp.id as "id!: i64",
-            sp.name as "name!: String",
-            CAST(COALESCE(sp.description, '') AS TEXT) as "description!: String",
-            sp.created_at as "created_at!: String",
-            CAST(COALESCE((
-                SELECT COUNT(*)
-                FROM project_files pf
-                WHERE pf.project_id = sp.id
-            ), 0) AS INTEGER) as "file_count!: i64"
-        FROM study_projects sp
-        WHERE sp.user_id = ?
-        ORDER BY sp.created_at DESC
-        "#,
-        user.id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| ProjectSummary {
-            id: row.id,
-            name: row.name,
-            description: if row.description.trim().is_empty() {
-                None
-            } else {
-                Some(row.description)
-            },
-            created_at: row.created_at,
-            file_count: row.file_count,
-        })
-        .collect())
-}
-
-#[server(GetProject)]
-pub async fn get_project(project_id: i64) -> Result<Project, ServerFnError> {
-    use sqlx::SqlitePool;
-
-    let user = require_auth().await?;
-    let pool = expect_context::<SqlitePool>();
-
-    let project = sqlx::query_as!(
-        Project,
-        r#"
-        SELECT id, user_id, name, description, created_at, updated_at
-        FROM study_projects
-        WHERE id = ? AND user_id = ?
-        "#,
-        project_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Project not found"))?;
-
-    Ok(project)
-}
-
-#[server(ListProjectFiles)]
-pub async fn list_project_files(project_id: i64) -> Result<Vec<ProjectFile>, ServerFnError> {
-    use sqlx::SqlitePool;
-
-    let user = require_auth().await?;
-    let pool = expect_context::<SqlitePool>();
-
-    let allowed = sqlx::query_scalar!(
-        "SELECT id FROM study_projects WHERE id = ? AND user_id = ?",
-        project_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if allowed.is_none() {
-        return Err(ServerFnError::new("Project not found"));
-    }
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id as "id!: i64",
-            project_id as "project_id!: i64",
-            original_filename as "original_filename!: String",
-            file_size as "file_size!: i64",
-            created_at as "created_at!: String",
-            CAST(COALESCE(substr(extracted_text, 1, 400), '') AS TEXT) as "text_preview!: String"
-        FROM project_files
-        WHERE project_id = ?
-        ORDER BY created_at DESC
-        "#,
-        project_id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| ProjectFile {
-            id: row.id,
-            project_id: row.project_id,
-            original_filename: row.original_filename,
-            file_size: row.file_size,
-            created_at: row.created_at,
-            text_preview: if row.text_preview.trim().is_empty() {
-                None
-            } else {
-                Some(row.text_preview)
-            },
-        })
-        .collect())
-}
-
-#[server(GetProjectFileText)]
-pub async fn get_project_file_text(file_id: i64) -> Result<String, ServerFnError> {
-    use sqlx::SqlitePool;
-
-    let user = require_auth().await?;
-    let pool = expect_context::<SqlitePool>();
-
-    let row = sqlx::query!(
-        r#"
-        SELECT CAST(COALESCE(pf.extracted_text, '') AS TEXT) as "extracted_text!: String"
-        FROM project_files pf
-        INNER JOIN study_projects sp ON sp.id = pf.project_id
-        WHERE pf.id = ? AND sp.user_id = ?
-        "#,
-        file_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("File not found"))?;
-
-    Ok(row.extracted_text)
-}
-
 #[cfg(feature = "ssr")]
 pub async fn get_project_pdf(
     axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
@@ -216,9 +9,10 @@ pub async fn get_project_pdf(
 
     use crate::features::auth::utils::get_user_from_session;
 
-    let user = get_user_from_session(&session)
-        .await
-        .ok_or((axum::http::StatusCode::UNAUTHORIZED, "Not authenticated".to_string()))?;
+    let user = get_user_from_session(&session).await.ok_or((
+        axum::http::StatusCode::UNAUTHORIZED,
+        "Not authenticated".to_string(),
+    ))?;
 
     let pool: &SqlitePool = &state.db_pool;
     let row = sqlx::query!(
@@ -272,9 +66,10 @@ pub async fn upload_project_file(
     use crate::features::auth::utils::get_user_from_session;
     use crate::features::projects::processing::extract_text_with_pdftotext;
 
-    let user = get_user_from_session(&session)
-        .await
-        .ok_or((axum::http::StatusCode::UNAUTHORIZED, "Not authenticated".to_string()))?;
+    let user = get_user_from_session(&session).await.ok_or((
+        axum::http::StatusCode::UNAUTHORIZED,
+        "Not authenticated".to_string(),
+    ))?;
 
     let pool: &SqlitePool = &state.db_pool;
     let project_exists = sqlx::query_scalar!(

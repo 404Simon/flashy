@@ -1,7 +1,7 @@
-use leptos::prelude::*;
 use super::models::InviteListItem;
 #[cfg(feature = "ssr")]
 use crate::features::auth::utils::require_auth;
+use leptos::prelude::*;
 
 #[server(CreateInvite)]
 pub async fn create_invite(

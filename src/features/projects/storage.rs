@@ -16,7 +16,8 @@ pub struct MinioSettings {
 #[cfg(feature = "ssr")]
 impl MinioSettings {
     pub fn from_env() -> Self {
-        let endpoint = std::env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let endpoint =
+            std::env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
         let region = std::env::var("MINIO_REGION").unwrap_or_else(|_| "us-east-1".to_string());
         let access_key =
             std::env::var("MINIO_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string());
@@ -27,7 +28,8 @@ impl MinioSettings {
             .unwrap_or_else(|_| "true".to_string())
             .to_lowercase()
             != "false";
-        let key_prefix = std::env::var("MINIO_KEY_PREFIX").unwrap_or_else(|_| "projects".to_string());
+        let key_prefix =
+            std::env::var("MINIO_KEY_PREFIX").unwrap_or_else(|_| "projects".to_string());
 
         Self {
             endpoint,
