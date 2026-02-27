@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Link, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    hooks::{use_navigate, use_params_map},
+    hooks::{use_navigate, use_params_map, use_query_map},
     path, StaticSegment,
 };
 
@@ -12,6 +12,7 @@ use crate::features::{
         models::UserSession,
     },
     invites::handlers::{list_invites, CreateInvite},
+    projects::handlers::{get_project, list_project_files, list_projects, CreateProject},
 };
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -67,6 +68,8 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("login") view=LoginPage/>
                     <Route path=path!("/register/:token") view=RegisterPage/>
                     <Route path=path!("/invite/:token") view=InvitePage/>
+                    <Route path=StaticSegment("projects") view=ProjectsPage/>
+                    <Route path=path!("/projects/:id") view=ProjectDetailPage/>
                     <Route path=path!("/admin/invites") view=AdminInvitesPage/>
                 </Routes>
             </main>
@@ -121,6 +124,7 @@ fn HomePage() -> impl IntoView {
                             <Show when=move || user.is_admin>
                                 <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/admin/invites">"Manage invites"</a>
                             </Show>
+                            <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/projects">"My projects"</a>
                             <button
                                 class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400"
                                 on:click=move |_| {
@@ -269,6 +273,7 @@ fn AdminInvitesPage() -> impl IntoView {
                 <p class="text-sm uppercase tracking-[0.3em] text-slate-400">"Admin"</p>
                 <h1 class="text-4xl font-semibold text-white">"Invites"</h1>
             </div>
+            <a class="text-sm text-slate-400 hover:text-white" href="/">"← Back to home"</a>
             <Show when=move || user.get().map(|u| u.is_admin).unwrap_or(false) fallback=move || {
                 view! { <p>"You are not authorized to view this page."</p> }
             }>
@@ -316,5 +321,289 @@ fn AdminInvitesPage() -> impl IntoView {
                 </Show>
             </Show>
         </section>
+    }
+}
+
+#[component]
+fn ProjectsPage() -> impl IntoView {
+    let user_resource =
+        expect_context::<LocalResource<Result<Option<UserSession>, ServerFnError>>>();
+    let user = Signal::derive(move || user_resource.get().and_then(|r| r.ok()).flatten());
+
+    let create_action = ServerAction::<CreateProject>::new();
+    let projects_resource = LocalResource::new(move || async move { list_projects().await });
+
+    Effect::new(move |_| {
+        if let Some(Ok(_)) = create_action.value().get() {
+            projects_resource.refetch();
+        }
+    });
+
+    view! {
+        <section class="mx-auto flex min-h-screen max-w-5xl flex-col gap-10 px-6 py-16">
+            <div class="space-y-3">
+                <p class="text-sm uppercase tracking-[0.3em] text-slate-400">"Workspace"</p>
+                <h1 class="text-4xl font-semibold text-white">"Study projects"</h1>
+                <p class="text-slate-300">"Upload lecture PDFs and turn them into study-ready material."</p>
+            </div>
+            <a class="text-sm text-slate-400 hover:text-white" href="/">"← Back to home"</a>
+
+            <Show
+                when=move || user.get().is_some()
+                fallback=move || view! {
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 text-slate-300">
+                        "Please log in to create and manage projects."
+                    </div>
+                }
+            >
+                <div class="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                        <h2 class="text-lg font-semibold text-white">"New project"</h2>
+                        <p class="mt-1 text-sm text-slate-400">"Keep one project per class or semester."</p>
+                        <div class="mt-5 space-y-4">
+                            <ActionForm action=create_action>
+                                <div class="space-y-4">
+                                    <label class="flex flex-col gap-2 text-sm text-slate-300">
+                                        "Project name"
+                                        <input class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100" type="text" name="name" required minlength="3"/>
+                                    </label>
+                                    <label class="flex flex-col gap-2 text-sm text-slate-300">
+                                        "Description (optional)"
+                                        <textarea class="min-h-[96px] rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100" name="description"></textarea>
+                                    </label>
+                                    <div class="pt-1">
+                                        <button class="inline-flex items-center rounded-full bg-white px-6 py-2 text-sm font-semibold text-slate-950" type="submit">"Create project"</button>
+                                    </div>
+                                </div>
+                            </ActionForm>
+                            {move || create_action
+                                .value()
+                                .get()
+                                .and_then(|value| value.err())
+                                .map(|err| view! {
+                                    <p class="text-sm text-rose-300">{err.to_string()}</p>
+                                })}
+                        </div>
+                    </div>
+
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                        <h2 class="text-lg font-semibold text-white">"Project library"</h2>
+                        <Show
+                            when=move || projects_resource.get().is_some()
+                            fallback=move || view! { <p class="mt-4 text-sm text-slate-400">"Loading projects..."</p> }
+                        >
+                            {move || -> AnyView { match projects_resource.get() {
+                                Some(Ok(projects)) if projects.is_empty() => view! {
+                                    <> <p class="mt-4 text-sm text-slate-400">"No projects yet."</p> </>
+                                }.into_any(),
+                                Some(Ok(projects)) => view! {
+                                    <>
+                                        <ul class="mt-4 space-y-3">
+                                            {projects.into_iter().map(|project| view! {
+                                                <li class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                                                    <div class="flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <a class="text-base font-semibold text-white hover:text-white/80" href=format!("/projects/{}", project.id)>
+                                                                {project.name}
+                                                            </a>
+                                                            {project.description.as_ref().map(|desc| view! {
+                                                                <p class="mt-1 text-sm text-slate-400">{desc.clone()}</p>
+                                                            })}
+                                                        </div>
+                                                        <span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">
+                                                            {format!("{} files", project.file_count)}
+                                                        </span>
+                                                    </div>
+                                                    <p class="mt-3 text-xs text-slate-500">
+                                                        {format!("Created {}", project.created_at)}
+                                                    </p>
+                                                </li>
+                                            }).collect_view()}
+                                        </ul>
+                                    </>
+                                }.into_any(),
+                                Some(Err(err)) => view! {
+                                    <> <p class="mt-4 text-sm text-rose-300">{err.to_string()}</p> </>
+                                }.into_any(),
+                                None => view! { <> </> }.into_any(),
+                            }}}
+                        </Show>
+                    </div>
+                </div>
+            </Show>
+        </section>
+    }
+}
+
+#[component]
+fn ProjectDetailPage() -> impl IntoView {
+    let user_resource =
+        expect_context::<LocalResource<Result<Option<UserSession>, ServerFnError>>>();
+    let user = Signal::derive(move || user_resource.get().and_then(|r| r.ok()).flatten());
+    let params = use_params_map();
+    let query = use_query_map();
+    let project_id = move || params.with(|p| p.get("id").and_then(|id| id.parse::<i64>().ok()));
+    let project_id_signal = Signal::derive(move || project_id());
+
+    let project_resource = LocalResource::new(move || {
+        let id = project_id();
+        async move {
+            let id = id.ok_or_else(|| ServerFnError::new("Invalid project"))?;
+            get_project(id).await
+        }
+    });
+
+    let files_resource = LocalResource::new(move || {
+        let id = project_id();
+        async move {
+            let id = id.ok_or_else(|| ServerFnError::new("Invalid project"))?;
+            list_project_files(id).await
+        }
+    });
+
+    let uploaded = move || query.with(|q| q.get("uploaded").is_some());
+
+    view! {
+        <section class="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-16">
+            <Show
+                when=move || user.get().is_some()
+                fallback=move || view! {
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 text-slate-300">
+                        "Please log in to view this project."
+                    </div>
+                }
+            >
+                <Show
+                    when=move || project_resource.get().is_some()
+                    fallback=move || view! { <p class="text-sm text-slate-400">"Loading project..."</p> }
+                >
+                    {move || -> AnyView { match project_resource.get() {
+                        Some(Ok(project)) => view! {
+                            <div class="space-y-2">
+                                <a class="text-sm text-slate-400 hover:text-white" href="/projects">"← Back to projects"</a>
+                                <h1 class="text-4xl font-semibold text-white">{project.name}</h1>
+                                {project.description.as_ref().map(|desc| view! {
+                                    <p class="text-slate-300">{desc.clone()}</p>
+                                })}
+                            </div>
+
+                            <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                                <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                                    <div class="flex items-center justify-between">
+                                        <h2 class="text-lg font-semibold text-white">"Lecture uploads"</h2>
+                                        <span class="text-xs text-slate-500">{format!("Created {}", project.created_at)}</span>
+                                    </div>
+                                    <p class="mt-2 text-sm text-slate-400">
+                                        "Upload PDF slides only."
+                                    </p>
+                                    {move || -> AnyView { if uploaded() {
+                                        view! {
+                                            <div class="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
+                                                "Upload complete. Text extraction finished."
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <div class="hidden"></div> }.into_any()
+                                    }}}
+                                    <form
+                                        class="mt-6 space-y-4"
+                                        method="post"
+                                        enctype="multipart/form-data"
+                                        action=move || project_id_signal
+                                            .get()
+                                            .map(|id| format!("/api/projects/{id}/upload"))
+                                            .unwrap_or_default()
+                                    >
+                                        <label class="flex flex-col gap-2 text-sm text-slate-300">
+                                            "PDF file"
+                                            <input
+                                                class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100"
+                                                type="file"
+                                                name="file"
+                                                accept="application/pdf,.pdf"
+                                                required
+                                            />
+                                        </label>
+                                        <div class="pt-1">
+                                            <button class="inline-flex items-center rounded-full bg-white px-6 py-2 text-sm font-semibold text-slate-950" type="submit">"Upload slides"</button>
+                                        </div>
+                                    </form>
+                                </div>
+
+                                <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                                    <h2 class="text-lg font-semibold text-white">"Text extraction"</h2>
+                                    <p class="mt-2 text-sm text-slate-400">
+                                        "We’ll summarize the upload here for future study sessions."
+                                    </p>
+                                    <Show
+                                        when=move || files_resource.get().is_some()
+                                        fallback=move || view! { <p class="mt-4 text-sm text-slate-400">"Loading files..."</p> }
+                                    >
+                                        {move || -> AnyView { match files_resource.get() {
+                                            Some(Ok(files)) if files.is_empty() => view! {
+                                                <> <p class="mt-4 text-sm text-slate-400">"No PDFs uploaded yet."</p> </>
+                                            }.into_any(),
+                                            Some(Ok(files)) => view! {
+                                                <>
+                                                    <ul class="mt-4 space-y-3">
+                                                        {files.into_iter().map(|file| {
+                                                            let preview = file.text_preview.clone().unwrap_or_default();
+                                                            let has_preview = !preview.trim().is_empty();
+                                                            view! {
+                                                                <li class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                                                                    <div class="flex items-start justify-between gap-3">
+                                                                        <div>
+                                                                            <p class="text-sm font-semibold text-white">{file.original_filename}</p>
+                                                                            <p class="text-xs text-slate-500">{format!("{} • {}", format_bytes(file.file_size), file.created_at)}</p>
+                                                                        </div>
+                                                                        <span class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">"PDF"</span>
+                                                                    </div>
+                                                                    {if has_preview {
+                                                                        view! {
+                                                                            <p class="mt-3 max-h-32 overflow-hidden text-xs text-slate-400 whitespace-pre-line">{preview}</p>
+                                                                        }
+                                                                    } else {
+                                                                        view! {
+                                                                            <p class="mt-3 text-xs text-slate-500">"No extractable text found."</p>
+                                                                        }
+                                                                    }}
+                                                                </li>
+                                                            }
+                                                        }).collect_view()}
+                                                    </ul>
+                                                </>
+                                            }.into_any(),
+                                            Some(Err(err)) => view! {
+                                                <> <p class="mt-4 text-sm text-rose-300">{err.to_string()}</p> </>
+                                            }.into_any(),
+                                            None => view! { <> </> }.into_any(),
+                                        }}}
+                                    </Show>
+                                </div>
+                            </div>
+                        }.into_any(),
+                        Some(Err(err)) => view! { <> <p class="text-sm text-rose-300">{err.to_string()}</p> </> }.into_any(),
+                        None => view! { <> </> }.into_any(),
+                    }}}
+                </Show>
+            </Show>
+        </section>
+    }
+}
+
+fn format_bytes(bytes: i64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut index = 0usize;
+
+    while size >= 1024.0 && index < units.len() - 1 {
+        size /= 1024.0;
+        index += 1;
+    }
+
+    if index == 0 {
+        format!("{bytes} {}", units[index])
+    } else {
+        format!("{size:.1} {}", units[index])
     }
 }

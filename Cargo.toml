@@ -25,6 +25,8 @@ tower-sessions = { version = "0.14", optional = true }
 tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], default-features = false, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
+s3 = { version = "0.1.17", optional = true }
+tempfile = { version = "3", optional = true }
 
 [features]
 hydrate = [
@@ -45,6 +47,8 @@ ssr = [
     "dep:tower-sessions-sqlx-store",
     "dep:uuid",
     "dep:time",
+    "dep:s3",
+    "dep:tempfile",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
