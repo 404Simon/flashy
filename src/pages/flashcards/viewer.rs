@@ -4,10 +4,11 @@ use leptos_router::hooks::use_params_map;
 use crate::features::{
     auth::models::UserSession,
     flashcards::{get_deck, list_flashcards, markdown::markdown_to_html, Flashcard},
+    projects::get_file_name,
 };
 
 #[component]
-pub fn DeckDetailPage() -> impl IntoView {
+pub fn DeckViewerPage() -> impl IntoView {
     let user_resource =
         expect_context::<LocalResource<Result<Option<UserSession>, ServerFnError>>>();
     let user = Signal::derive(move || user_resource.get().and_then(|r| r.ok()).flatten());
@@ -74,8 +75,8 @@ pub fn DeckDetailPage() -> impl IntoView {
                                 <div class="flex items-center justify-between">
                                     <a
                                         class="text-sm text-slate-400 hover:text-white"
-                                        href=format!("/projects/{}/decks", deck.project_id)
-                                    >"← Back to decks"</a>
+                                        href=format!("/decks/{}", deck.id)
+                                    >"← Back to deck"</a>
                                     <a
                                         class="inline-flex items-center rounded-full border border-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-300 hover:border-slate-400 hover:bg-slate-900"
                                         href=format!("/api/decks/{}/download/anki", deck.id)
@@ -170,6 +171,25 @@ fn FlashcardViewer(
     show_answer: ReadSignal<bool>,
     on_toggle: impl Fn() + 'static + Copy + Send + Sync,
 ) -> impl IntoView {
+    // Fetch file name if card has a file_id
+    let file_name_resource = LocalResource::new(move || async move {
+        if let Some(c) = card.get() {
+            if let Some(file_id) = c.file_id {
+                get_file_name(file_id).await.ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
+    // Refetch when card changes
+    Effect::new(move |_| {
+        let _ = card.get();
+        file_name_resource.refetch();
+    });
+
     // MathJax rendering effect
     Effect::new(move |_| {
         let _ = show_answer.get();
@@ -229,11 +249,14 @@ fn FlashcardViewer(
                                         inner_html=move || back_html.get()
                                     ></div>
 
-                                    {card.document_reference.as_ref().map(|doc_ref| view! {
-                                        <div class="mt-4 text-xs text-slate-500">
-                                            "Reference: " {doc_ref.clone()}
-                                        </div>
-                                    })}
+                                    <div class="mt-4 space-y-1 text-xs text-slate-500">
+                                        {card.document_reference.as_ref().map(|doc_ref| view! {
+                                            <div>"Reference: " {doc_ref.clone()}</div>
+                                        })}
+                                        {move || file_name_resource.get().flatten().map(|name| view! {
+                                            <div>"Source: " {name}</div>
+                                        })}
+                                    </div>
                                 </div>
                             </Show>
 

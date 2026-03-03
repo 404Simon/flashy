@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "ssr")]
 use crate::features::auth::utils::require_auth;
 
-use super::super::models::{Flashcard, GenerationJob, GenerationPrompt};
+use super::super::models::{Flashcard, GenerationJob, GenerationJobWithFile, GenerationPrompt};
 
 // Default prompt template
 pub const DEFAULT_PROMPT_TEMPLATE: &str = r#"# Agent Instructions: Flashcards for $DECK_TITLE$
@@ -397,6 +397,67 @@ pub async fn list_generation_jobs_for_deck(
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(jobs)
+}
+
+#[server(ListGenerationJobsWithFilesForDeck)]
+pub async fn list_generation_jobs_with_files_for_deck(
+    deck_id: i64,
+) -> Result<Vec<GenerationJobWithFile>, ServerFnError> {
+    use sqlx::SqlitePool;
+
+    let user = require_auth().await?;
+    let pool = expect_context::<SqlitePool>();
+
+    // Verify user owns the deck
+    sqlx::query!(
+        r#"
+        SELECT fd.id
+        FROM flashcard_decks fd
+        INNER JOIN study_projects sp ON fd.project_id = sp.id
+        WHERE fd.id = ? AND sp.user_id = ?
+        "#,
+        deck_id,
+        user.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            gj.id as "id!: i64",
+            gj.file_id as "file_id!: i64",
+            pf.original_filename as "file_name!: String",
+            gj.status as "status!: String",
+            gj.cards_generated as "cards_generated!: i64",
+            gj.error_message as "error_message: String",
+            gj.created_at as "created_at!: String"
+        FROM generation_jobs gj
+        INNER JOIN project_files pf ON gj.file_id = pf.id
+        WHERE gj.deck_id = ? AND gj.user_id = ?
+        ORDER BY gj.created_at DESC
+        "#,
+        deck_id,
+        user.id
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| GenerationJobWithFile {
+            id: row.id,
+            file_id: row.file_id,
+            file_name: row.file_name,
+            status: row.status,
+            cards_generated: row.cards_generated,
+            error_message: row.error_message,
+            created_at: row.created_at,
+        })
+        .collect())
 }
 
 #[cfg(feature = "ssr")]

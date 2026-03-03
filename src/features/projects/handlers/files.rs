@@ -128,3 +128,28 @@ pub async fn delete_project_file(file_id: i64) -> Result<(), ServerFnError> {
 
     Ok(())
 }
+
+#[server(GetFileName)]
+pub async fn get_file_name(file_id: i64) -> Result<String, ServerFnError> {
+    use sqlx::SqlitePool;
+
+    let user = require_auth().await?;
+    let pool = expect_context::<SqlitePool>();
+
+    let row = sqlx::query!(
+        r#"
+        SELECT pf.original_filename as "original_filename!: String"
+        FROM project_files pf
+        INNER JOIN study_projects sp ON sp.id = pf.project_id
+        WHERE pf.id = ? AND sp.user_id = ?
+        "#,
+        file_id,
+        user.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("File not found"))?;
+
+    Ok(row.original_filename)
+}

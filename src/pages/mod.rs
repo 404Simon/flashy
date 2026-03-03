@@ -5,7 +5,7 @@ pub mod invites;
 pub mod projects;
 
 pub use auth::{LoginPage, RegisterPage};
-pub use flashcards::{DeckDetailPage, DecksPage};
+pub use flashcards::{DeckDetailPage, DeckViewerPage, DecksPage};
 pub use home::HomePage;
 pub use invites::{AdminInvitesPage, InvitePage};
 pub use projects::{ProjectDetailPage, ProjectsPage};

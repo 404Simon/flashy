@@ -72,3 +72,22 @@ pub struct GenerationJob {
     pub updated_at: String,
     pub completed_at: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileCardGroup {
+    pub file_id: i64,
+    pub file_name: String,
+    pub card_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GenerationJobWithFile {
+    pub id: i64,
+    pub file_id: i64,
+    pub file_name: String,
+    pub status: String,
+    pub cards_generated: i64,
+    pub error_message: Option<String>,
+    pub created_at: String,
+}
