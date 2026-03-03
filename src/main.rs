@@ -10,6 +10,7 @@ async fn main() {
         db::init_db,
         features::{
             auth::utils::ensure_admin_user,
+            flashcards::handlers::anki_export::download_deck_as_anki,
             projects::handlers::{get_project_pdf, upload_project_file},
             projects::processing::MAX_PDF_BYTES,
             projects::storage::{build_minio_client, MinioSettings},
@@ -96,6 +97,10 @@ async fn main() {
         .route(
             "/api/projects/{project_id}/files/{file_id}/pdf",
             get(get_project_pdf),
+        )
+        .route(
+            "/api/decks/{deck_id}/download/anki",
+            get(download_deck_as_anki),
         )
         .leptos_routes_with_context(
             &app_state,

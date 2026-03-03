@@ -1,66 +1,10 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use pulldown_cmark::{html, Options, Parser};
-use regex::Regex;
-use std::sync::OnceLock;
 
 use crate::features::{
     auth::models::UserSession,
-    flashcards::{get_deck, list_flashcards, Flashcard},
+    flashcards::{get_deck, list_flashcards, markdown::markdown_to_html, Flashcard},
 };
-
-fn get_display_math_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"\\\[(?s)(.*?)\\\]").unwrap())
-}
-
-fn get_inline_math_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"\\\((?s)(.*?)\\\)").unwrap())
-}
-
-fn markdown_to_html(markdown: &str) -> String {
-    use std::collections::HashMap;
-
-    // Step 1: Extract and protect LaTeX math expressions
-    let mut math_map = HashMap::new();
-    let mut counter = 0;
-
-    // Protect display math \[ ... \] first (do this before inline to avoid conflicts)
-    let display_math_re = get_display_math_regex();
-    let protected_text = display_math_re.replace_all(markdown, |caps: &regex::Captures| {
-        let placeholder = format!("DISPLAYMATH{}", counter);
-        math_map.insert(placeholder.clone(), caps[0].to_string());
-        counter += 1;
-        placeholder
-    });
-
-    // Protect inline math \( ... \)
-    let inline_math_re = get_inline_math_regex();
-    let protected_text = inline_math_re.replace_all(&protected_text, |caps: &regex::Captures| {
-        let placeholder = format!("INLINEMATH{}", counter);
-        math_map.insert(placeholder.clone(), caps[0].to_string());
-        counter += 1;
-        placeholder
-    });
-
-    // Step 2: Convert markdown to HTML
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-
-    let parser = Parser::new_ext(&protected_text, options);
-    let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
-
-    // Step 3: Restore LaTeX math expressions
-    for (placeholder, original) in math_map {
-        html_output = html_output.replace(&placeholder, &original);
-    }
-
-    html_output
-}
 
 #[component]
 pub fn DeckDetailPage() -> impl IntoView {
@@ -127,10 +71,19 @@ pub fn DeckDetailPage() -> impl IntoView {
                     {move || match deck_resource.get() {
                         Some(Ok(deck)) => view! {
                             <div class="space-y-2">
-                                <a
-                                    class="text-sm text-slate-400 hover:text-white"
-                                    href=format!("/projects/{}/decks", deck.project_id)
-                                >"← Back to decks"</a>
+                                <div class="flex items-center justify-between">
+                                    <a
+                                        class="text-sm text-slate-400 hover:text-white"
+                                        href=format!("/projects/{}/decks", deck.project_id)
+                                    >"← Back to decks"</a>
+                                    <a
+                                        class="inline-flex items-center rounded-full border border-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-300 hover:border-slate-400 hover:bg-slate-900"
+                                        href=format!("/api/decks/{}/download/anki", deck.id)
+                                        download
+                                    >
+                                        "↓ Download as Anki"
+                                    </a>
+                                </div>
                                 <h1 class="text-4xl font-semibold text-white">{deck.name.clone()}</h1>
                                 {deck.description.as_ref().map(|desc| view! {
                                     <p class="text-slate-300">{desc.clone()}</p>

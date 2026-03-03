@@ -36,6 +36,8 @@ web-sys = { version = "0.3", optional = true }
 js-sys = { version = "0.3", optional = true }
 pulldown-cmark = "0.12"
 regex = "1"
+zip = { version = "2", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 
 [features]
 hydrate = [
@@ -65,6 +67,8 @@ ssr = [
     "dep:futures-util",
     "dep:llm",
     "dep:serde_json",
+    "dep:zip",
+    "dep:rusqlite",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
