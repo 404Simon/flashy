@@ -1,4 +1,37 @@
 services:
+  flashy:
+    container_name: flashy
+    image: ghcr.io/404simon/flashy:latest
+    # Run as host user to avoid permission issues with bind-mounted volumes
+    # Set UID/GID in .env file or they default to 1000:1000
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:/app/data/flashy.db
+      - RUST_LOG=info
+      - LEPTOS_SITE_ADDR=0.0.0.0:8080
+      - LEPTOS_SITE_ROOT=/app/site
+    restart: unless-stopped
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    depends_on:
+      - minio
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -10,6 +43,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
+    restart: unless-stopped
 
 volumes:
   minio_data:
