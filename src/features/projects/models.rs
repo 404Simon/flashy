@@ -33,4 +33,5 @@ pub struct ProjectFile {
     pub processing_status: String,
     pub created_at: String,
     pub text_preview: Option<String>,
+    pub word_count: Option<i64>,
 }

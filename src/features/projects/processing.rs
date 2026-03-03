@@ -2,14 +2,18 @@
 use std::{path::Path, process::Stdio, time::Duration};
 
 #[cfg(feature = "ssr")]
-pub const MAX_PDF_BYTES: u64 = 50 * 1024 * 1024;
-#[cfg(feature = "ssr")]
 const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(feature = "ssr")]
 pub async fn extract_text_with_pdftotext(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
-    if pdf_size > MAX_PDF_BYTES {
-        return Err("Uploaded PDF exceeded the size limit".to_string());
+    use crate::config::Config;
+
+    let config = Config::global();
+    if pdf_size > config.max_pdf_bytes {
+        return Err(format!(
+            "Uploaded PDF exceeded the size limit of {} MB",
+            config.max_pdf_bytes / 1024 / 1024
+        ));
     }
 
     let mut command = tokio::process::Command::new("pdftotext");

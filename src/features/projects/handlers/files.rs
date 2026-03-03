@@ -33,7 +33,8 @@ pub async fn list_project_files(project_id: i64) -> Result<Vec<ProjectFile>, Ser
             file_size as "file_size!: i64",
             processing_status as "processing_status!: String",
             created_at as "created_at!: String",
-            CAST(COALESCE(substr(extracted_text, 1, 400), '') AS TEXT) as "text_preview!: String"
+            CAST(COALESCE(substr(extracted_text, 1, 400), '') AS TEXT) as "text_preview!: String",
+            extracted_text as "extracted_text: String"
         FROM project_files
         WHERE project_id = ?
         ORDER BY created_at DESC
@@ -46,18 +47,25 @@ pub async fn list_project_files(project_id: i64) -> Result<Vec<ProjectFile>, Ser
 
     Ok(rows
         .into_iter()
-        .map(|row| ProjectFile {
-            id: row.id,
-            project_id: row.project_id,
-            original_filename: row.original_filename,
-            file_size: row.file_size,
-            processing_status: row.processing_status,
-            created_at: row.created_at,
-            text_preview: if row.text_preview.trim().is_empty() {
-                None
-            } else {
-                Some(row.text_preview)
-            },
+        .map(|row| {
+            let word_count = row
+                .extracted_text
+                .as_ref()
+                .map(|text| text.split_whitespace().count() as i64);
+            ProjectFile {
+                id: row.id,
+                project_id: row.project_id,
+                original_filename: row.original_filename,
+                file_size: row.file_size,
+                processing_status: row.processing_status,
+                created_at: row.created_at,
+                text_preview: if row.text_preview.trim().is_empty() {
+                    None
+                } else {
+                    Some(row.text_preview)
+                },
+                word_count,
+            }
         })
         .collect())
 }

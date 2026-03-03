@@ -6,6 +6,12 @@ use crate::features::auth::utils::require_auth;
 
 use super::super::models::{Flashcard, GenerationJob, GenerationJobWithFile, GenerationPrompt};
 
+#[cfg(feature = "ssr")]
+fn get_max_context_words() -> usize {
+    use crate::config::Config;
+    Config::global().max_context_words
+}
+
 // Default prompt template
 pub const DEFAULT_PROMPT_TEMPLATE: &str = r#"# Agent Instructions: Flashcards for $DECK_TITLE$
 
@@ -94,6 +100,16 @@ pub async fn generate_flashcards(
     let extracted_text = file
         .extracted_text
         .ok_or_else(|| ServerFnError::new("File has no extracted text"))?;
+
+    // Check word count limit
+    let word_count = extracted_text.split_whitespace().count();
+    let max_words = get_max_context_words();
+    if word_count > max_words {
+        return Err(ServerFnError::new(format!(
+            "Document is too large for AI generation. Document has {} words, but the maximum is {} words. Please use a smaller document or split it into multiple files.",
+            word_count, max_words
+        )));
+    }
 
     // Prepare the prompt
     let prompt_template = prompt_template.unwrap_or_else(|| DEFAULT_PROMPT_TEMPLATE.to_string());
@@ -510,6 +526,28 @@ async fn process_generation_job(
         file_name,
         extracted_text.len()
     );
+
+    // Check word count limit
+    let word_count = extracted_text.split_whitespace().count();
+    let max_words = get_max_context_words();
+    if word_count > max_words {
+        let error_message = format!(
+            "Document is too large for AI generation. Document has {} words, but the maximum is {} words. Please use a smaller document or split it into multiple files.",
+            word_count, max_words
+        );
+        eprintln!("✗ [Job {}] {}", job_id, error_message);
+
+        // Mark job as failed
+        sqlx::query(
+            "UPDATE generation_jobs SET status = 'failed', error_message = ?, updated_at = datetime('now'), completed_at = datetime('now') WHERE id = ?"
+        )
+        .bind(&error_message)
+        .bind(job_id)
+        .execute(&pool)
+        .await?;
+
+        return Err(error_message.into());
+    }
 
     // Prepare the prompt
     let prompt_template = prompt_template.unwrap_or_else(|| DEFAULT_PROMPT_TEMPLATE.to_string());

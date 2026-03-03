@@ -91,9 +91,10 @@ pub async fn upload_project_file(
 
     use sqlx::SqlitePool;
 
+    use crate::config::Config;
     use crate::features::auth::utils::get_user_from_session;
-    use crate::features::projects::processing::MAX_PDF_BYTES;
 
+    let config = Config::global();
     let user = get_user_from_session(&session).await.ok_or((
         axum::http::StatusCode::UNAUTHORIZED,
         "Not authenticated".to_string(),
@@ -162,7 +163,7 @@ pub async fn upload_project_file(
             .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?
         {
             file_size = file_size.saturating_add(chunk.len() as u64);
-            if file_size > MAX_PDF_BYTES {
+            if file_size > config.max_pdf_bytes {
                 continue; // Skip files that are too large
             }
             temp_file
@@ -175,7 +176,7 @@ pub async fn upload_project_file(
             .await
             .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
 
-        if file_size == 0 || file_size > MAX_PDF_BYTES {
+        if file_size == 0 || file_size > config.max_pdf_bytes {
             continue; // Skip empty or oversized files
         }
 

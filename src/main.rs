@@ -7,6 +7,7 @@ async fn main() {
     use flashy::{
         app::*,
         app_state::AppState,
+        config::Config,
         db::init_db,
         features::{
             auth::utils::ensure_admin_user,
@@ -35,6 +36,16 @@ async fn main() {
         .init();
 
     tracing::info!("Starting Flashy application");
+
+    // Load configuration from environment
+    let config = Config::global();
+    tracing::info!("Configuration loaded:");
+    tracing::info!(
+        "  Max upload size: {} MB",
+        config.max_upload_bytes / 1024 / 1024
+    );
+    tracing::info!("  Max PDF size: {} MB", config.max_pdf_bytes / 1024 / 1024);
+    tracing::info!("  Max context words: {}", config.max_context_words);
 
     let pool = init_db()
         .await
@@ -101,7 +112,7 @@ async fn main() {
             "/api/decks/{deck_id}/download/anki",
             get(download_deck_as_anki),
         )
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100MB limit
+        .layer(DefaultBodyLimit::max(config.max_upload_bytes))
         .leptos_routes_with_context(
             &app_state,
             routes,

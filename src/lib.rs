@@ -1,5 +1,7 @@
 pub mod app;
 pub mod app_state;
+pub mod config;
+pub mod config_handlers;
 pub mod db;
 pub mod features;
 pub mod pages;

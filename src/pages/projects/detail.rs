@@ -2,6 +2,7 @@ use leptos::html::Form;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 
+use crate::config_handlers::get_app_config;
 use crate::features::{
     auth::models::UserSession,
     projects::handlers::{
@@ -35,6 +36,8 @@ pub fn ProjectDetailPage() -> impl IntoView {
             list_project_files(id).await
         }
     });
+
+    let config_resource = LocalResource::new(move || async move { get_app_config().await.ok() });
 
     let uploaded = move || {
         query.with(|q| {
@@ -203,6 +206,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                                     let status = file.processing_status.clone();
                                                     let is_processing = status == "pending" || status == "processing";
                                                     let is_failed = status == "failed";
+                                                    let word_count = file.word_count;
 
                                                     view! {
                                                         <li
@@ -216,7 +220,27 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                                                     }
                                                                 }>
                                                                     <p class="text-sm font-semibold text-white">{file.original_filename.clone()}</p>
-                                                                    <p class="mt-1 text-xs text-slate-500">{format!("{} • {}", format_bytes(file.file_size), file.created_at.clone())}</p>
+                                                                    <p class="mt-1 text-xs text-slate-500">
+                                                                        {format!("{} • {}", format_bytes(file.file_size), file.created_at.clone())}
+                                                                    </p>
+                                                                    {move || -> AnyView {
+                                                                        if let Some(wc) = word_count {
+                                                                            let max_words = config_resource.get()
+                                                                                .flatten()
+                                                                                .map(|c| c.max_context_words)
+                                                                                .unwrap_or(12_000);
+                                                                            let is_over_limit = wc as usize > max_words;
+                                                                            let color_class = if is_over_limit { "text-rose-400" } else { "text-slate-500" };
+                                                                            view! {
+                                                                                <p class=format!("mt-1 text-xs {}", color_class)>
+                                                                                    {format!("{} words", format_number(wc))}
+                                                                                    {if is_over_limit { format!(" (exceeds limit of {})", format_number(max_words as i64)) } else { String::new() }}
+                                                                                </p>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! { <span></span> }.into_any()
+                                                                        }
+                                                                    }}
 
                                                                     {move || -> AnyView {
                                                                         if is_processing {
@@ -388,4 +412,19 @@ fn format_bytes(bytes: i64) -> String {
     } else {
         format!("{size:.1} {}", units[index])
     }
+}
+
+fn format_number(num: i64) -> String {
+    let s = num.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+
+    for (i, ch) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*ch);
+    }
+
+    result
 }
