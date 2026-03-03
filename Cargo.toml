@@ -29,12 +29,20 @@ uuid = { version = "1", features = ["v4"], optional = true }
 time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
 s3 = { version = "0.1.17", optional = true }
 tempfile = { version = "3", optional = true }
+llm = { version = "1.2", features = ["deepseek"], optional = true }
+serde_json = { version = "1", optional = true }
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+web-sys = { version = "0.3", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [features]
 hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
+    "dep:gloo-timers",
+    "dep:web-sys",
+    "dep:js-sys",
 ]
 ssr = [
     "dep:axum",
@@ -53,6 +61,8 @@ ssr = [
     "dep:tempfile",
     "dep:tokio-util",
     "dep:futures-util",
+    "dep:llm",
+    "dep:serde_json",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

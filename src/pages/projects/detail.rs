@@ -87,6 +87,14 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                 {project.description.as_ref().map(|desc| view! {
                                     <p class="text-slate-300">{desc.clone()}</p>
                                 })}
+                                <div class="pt-2">
+                                    <a
+                                        class="inline-flex items-center rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400"
+                                        href=format!("/projects/{}/decks", project.id)
+                                    >
+                                        "View Flashcard Decks →"
+                                    </a>
+                                </div>
                             </div>
 
                             <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
