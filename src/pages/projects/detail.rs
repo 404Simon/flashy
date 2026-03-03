@@ -1,9 +1,12 @@
+use leptos::html::Form;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 
 use crate::features::{
     auth::models::UserSession,
-    projects::handlers::{get_project, get_project_file_text, list_project_files},
+    projects::handlers::{
+        delete_project_file, get_project, get_project_file_text, list_project_files,
+    },
 };
 
 #[component]
@@ -33,9 +36,21 @@ pub fn ProjectDetailPage() -> impl IntoView {
         }
     });
 
-    let uploaded = move || query.with(|q| q.get("uploaded").is_some());
+    let uploaded = move || {
+        query.with(|q| {
+            q.get("uploaded")
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0)
+        })
+    };
+
     let selected_file_id = RwSignal::new(None::<i64>);
     let pdf_modal_url = RwSignal::new(None::<String>);
+    let upload_form_ref = NodeRef::<Form>::new();
+    let delete_action = Action::new(|file_id: &i64| {
+        let file_id = *file_id;
+        async move { delete_project_file(file_id).await }
+    });
 
     let text_resource = LocalResource::new(move || {
         let file_id = selected_file_id.get();
@@ -43,6 +58,31 @@ pub fn ProjectDetailPage() -> impl IntoView {
             match file_id {
                 Some(id) => get_project_file_text(id).await,
                 None => Ok(String::new()),
+            }
+        }
+    });
+
+    // Refetch files when delete completes
+    Effect::new(move |_| {
+        if delete_action.value().get().is_some() {
+            files_resource.refetch();
+        }
+    });
+
+    // Auto-refresh files list to show processing status
+    Effect::new(move |_| {
+        if let Some(Ok(files)) = files_resource.get() {
+            // Check if any files are still processing
+            let has_processing = files
+                .iter()
+                .any(|f| f.processing_status == "pending" || f.processing_status == "processing");
+            if has_processing {
+                set_timeout(
+                    move || {
+                        files_resource.refetch();
+                    },
+                    std::time::Duration::from_secs(2),
+                );
             }
         }
     });
@@ -97,26 +137,12 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                 </div>
                             </div>
 
-                            <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-                                <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-                                    <div class="flex items-center justify-between">
-                                        <h2 class="text-lg font-semibold text-white">"Lecture uploads"</h2>
-                                        <span class="text-xs text-slate-500">{format!("Created {}", project.created_at)}</span>
-                                    </div>
-                                    <p class="mt-2 text-sm text-slate-400">
-                                        "Upload PDF slides only."
-                                    </p>
-                                    {move || -> AnyView { if uploaded() {
-                                        view! {
-                                            <div class="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
-                                                "Upload complete. Text extraction finished."
-                                            </div>
-                                        }.into_any()
-                                    } else {
-                                        view! { <div class="hidden"></div> }.into_any()
-                                    }}}
+                            <div class="mx-auto max-w-4xl">
+                                <div class="mb-6 flex items-center justify-between">
+                                    <h2 class="text-lg font-semibold text-white">"Uploaded files"</h2>
                                     <form
-                                        class="mt-6 space-y-4"
+                                        node_ref=upload_form_ref
+                                        class="flex items-center gap-2"
                                         method="post"
                                         enctype="multipart/form-data"
                                         action=move || project_id_signal
@@ -124,87 +150,146 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                             .map(|id| format!("/api/projects/{id}/upload"))
                                             .unwrap_or_default()
                                     >
-                                        <label class="flex flex-col gap-2 text-sm text-slate-300">
-                                            "PDF file"
+                                        <label class="cursor-pointer">
                                             <input
-                                                class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100"
+                                                class="hidden"
                                                 type="file"
                                                 name="file"
                                                 accept="application/pdf,.pdf"
+                                                multiple
                                                 required
+                                                on:change=move |_| {
+                                                    if let Some(form) = upload_form_ref.get() {
+                                                        let _ = form.submit();
+                                                    }
+                                                }
                                             />
+                                            <span class="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/50 px-4 py-2 text-sm text-slate-300 hover:border-slate-400 hover:bg-slate-900">
+                                                "+ Upload PDF"
+                                            </span>
                                         </label>
-                                        <div class="pt-1">
-                                            <button class="inline-flex items-center rounded-full bg-white px-6 py-2 text-sm font-semibold text-slate-950" type="submit">"Upload slides"</button>
-                                        </div>
                                     </form>
                                 </div>
 
-                                <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-                                    <h2 class="text-lg font-semibold text-white">"Text extraction"</h2>
-                                    <p class="mt-2 text-sm text-slate-400">
-                                        "We’ll summarize the upload here for future study sessions."
-                                    </p>
-                                    <Show
-                                        when=move || files_resource.get().is_some()
-                                        fallback=move || view! { <p class="mt-4 text-sm text-slate-400">"Loading files..."</p> }
-                                    >
-                                        {move || -> AnyView { match files_resource.get() {
-                                            Some(Ok(files)) if files.is_empty() => view! {
-                                                <> <p class="mt-4 text-sm text-slate-400">"No PDFs uploaded yet."</p> </>
-                                            }.into_any(),
-                                            Some(Ok(files)) => view! {
-                                                <>
-                                                    <ul class="mt-4 space-y-3">
-                                                        {files.into_iter().map(|file| {
-                                                            let preview = file.text_preview.clone().unwrap_or_default();
-                                                            let has_preview = !preview.trim().is_empty();
-                                                            view! {
-                                                                <li
-                                                                    class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 transition hover:border-slate-700 hover:bg-slate-900/70"
-                                                                    on:click=move |_| {
+                                {move || -> AnyView {
+                                    let count = uploaded();
+                                    if count > 0 {
+                                        view! {
+                                            <div class="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
+                                                {format!("{} file{} uploaded. Processing in background...", count, if count > 1 { "s" } else { "" })}
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <div class="hidden"></div> }.into_any()
+                                    }
+                                }}
+
+                                <Show
+                                    when=move || files_resource.get().is_some()
+                                    fallback=move || view! { <p class="text-sm text-slate-400">"Loading files..."</p> }
+                                >
+                                    {move || -> AnyView { match files_resource.get() {
+                                        Some(Ok(files)) if files.is_empty() => view! {
+                                            <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
+                                                <p class="text-sm text-slate-400">"No PDFs uploaded yet."</p>
+                                                <p class="mt-2 text-xs text-slate-500">"Click the '+ Upload PDF' button to get started."</p>
+                                            </div>
+                                        }.into_any(),
+                                        Some(Ok(files)) => view! {
+                                            <ul class="space-y-3">
+                                                {files.into_iter().map(|file| {
+                                                    let preview = file.text_preview.clone().unwrap_or_default();
+                                                    let has_preview = !preview.trim().is_empty();
+                                                    let status = file.processing_status.clone();
+                                                    let is_processing = status == "pending" || status == "processing";
+                                                    let is_failed = status == "failed";
+
+                                                    view! {
+                                                        <li
+                                                            class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 transition hover:border-slate-700 hover:bg-slate-900/70"
+                                                            class:opacity-60=move || is_processing
+                                                        >
+                                                            <div class="flex items-start justify-between gap-3">
+                                                                <div class="flex-1 cursor-pointer" on:click=move |_| {
+                                                                    if !is_processing && !is_failed {
                                                                         open_text_modal(file.id);
                                                                     }
-                                                                >
-                                                                    <div class="flex items-start justify-between gap-3">
-                                                                        <div>
-                                                                            <p class="text-sm font-semibold text-white">{file.original_filename}</p>
-                                                                            <p class="text-xs text-slate-500">{format!("{} • {}", format_bytes(file.file_size), file.created_at)}</p>
-                                                                        </div>
-                                                                        <button
-                                                                            class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-400"
-                                                                            on:click=move |ev| {
-                                                                                ev.stop_propagation();
-                                                                                if let Some(project_id) = project_id_signal.get() {
-                                                                                    open_pdf_modal(project_id, file.id);
-                                                                                }
+                                                                }>
+                                                                    <p class="text-sm font-semibold text-white">{file.original_filename.clone()}</p>
+                                                                    <p class="mt-1 text-xs text-slate-500">{format!("{} • {}", format_bytes(file.file_size), file.created_at.clone())}</p>
+
+                                                                    {move || -> AnyView {
+                                                                        if is_processing {
+                                                                            view! {
+                                                                                <p class="mt-1 text-xs text-amber-400">"Processing..."</p>
+                                                                            }.into_any()
+                                                                        } else if is_failed {
+                                                                            view! {
+                                                                                <p class="mt-1 text-xs text-rose-400">"Processing failed"</p>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! { <span></span> }.into_any()
+                                                                        }
+                                                                    }}
+                                                                </div>
+                                                                <div class="flex gap-2">
+                                                                    {move || -> AnyView {
+                                                                        if !is_processing && !is_failed {
+                                                                            view! {
+                                                                                <button
+                                                                                    class="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-400"
+                                                                                    on:click=move |ev| {
+                                                                                        ev.stop_propagation();
+                                                                                        if let Some(project_id) = project_id_signal.get() {
+                                                                                            open_pdf_modal(project_id, file.id);
+                                                                                        }
+                                                                                    }
+                                                                                >
+                                                                                    "View PDF"
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! { <span></span> }.into_any()
+                                                                        }
+                                                                    }}
+                                                                    <button
+                                                                        class="rounded-full border border-rose-800 px-3 py-1 text-xs text-rose-300 hover:border-rose-600"
+                                                                        type="button"
+                                                                        on:click=move |ev| {
+                                                                            ev.stop_propagation();
+                                                                            if window().confirm_with_message("Are you sure you want to delete this file?").unwrap_or(false) {
+                                                                                delete_action.dispatch(file.id);
                                                                             }
-                                                                        >
-                                                                            "PDF"
-                                                                        </button>
-                                                                    </div>
-                                                                    {move || -> AnyView { if has_preview {
-                                                                        view! {
-                                                                            <p class="mt-3 max-h-32 overflow-hidden text-xs text-slate-400 whitespace-pre-line">{preview.clone()}</p>
-                                                                        }.into_any()
-                                                                    } else {
-                                                                        view! {
-                                                                            <p class="mt-3 text-xs text-slate-500">"No extractable text found."</p>
-                                                                        }.into_any()
-                                                                    }}}
-                                                                </li>
-                                                            }
-                                                        }).collect_view()}
-                                                    </ul>
-                                                </>
-                                            }.into_any(),
-                                            Some(Err(err)) => view! {
-                                                <> <p class="mt-4 text-sm text-rose-300">{err.to_string()}</p> </>
-                                            }.into_any(),
-                                            None => view! { <> </> }.into_any(),
-                                        }}}
-                                    </Show>
-                                </div>
+                                                                        }
+                                                                    >
+                                                                        "Delete"
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            {move || -> AnyView {
+                                                                if !is_processing && !is_failed && has_preview {
+                                                                    view! {
+                                                                        <p class="mt-3 max-h-32 overflow-hidden text-xs text-slate-400 whitespace-pre-line">{preview.clone()}</p>
+                                                                    }.into_any()
+                                                                } else if !is_processing && !is_failed && !has_preview {
+                                                                    view! {
+                                                                        <p class="mt-3 text-xs text-slate-500">"No extractable text found."</p>
+                                                                    }.into_any()
+                                                                } else {
+                                                                    view! { <span></span> }.into_any()
+                                                                }
+                                                            }}
+                                                        </li>
+                                                    }
+                                                }).collect_view()}
+                                            </ul>
+                                        }.into_any(),
+                                        Some(Err(err)) => view! {
+                                            <p class="text-sm text-rose-300">{err.to_string()}</p>
+                                        }.into_any(),
+                                        None => view! { <> </> }.into_any(),
+                                    }}}
+                                </Show>
                             </div>
                         }.into_any(),
                         Some(Err(err)) => view! { <> <p class="text-sm text-rose-300">{err.to_string()}</p> </> }.into_any(),

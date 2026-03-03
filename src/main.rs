@@ -12,7 +12,6 @@ async fn main() {
             auth::utils::ensure_admin_user,
             flashcards::handlers::anki_export::download_deck_as_anki,
             projects::handlers::{get_project_pdf, upload_project_file},
-            projects::processing::MAX_PDF_BYTES,
             projects::storage::{build_minio_client, MinioSettings},
         },
     };
@@ -92,7 +91,7 @@ async fn main() {
     let app = Router::new()
         .route(
             "/api/projects/{project_id}/upload",
-            post(upload_project_file).layer(DefaultBodyLimit::max(MAX_PDF_BYTES as usize)),
+            post(upload_project_file),
         )
         .route(
             "/api/projects/{project_id}/files/{file_id}/pdf",
@@ -102,6 +101,7 @@ async fn main() {
             "/api/decks/{deck_id}/download/anki",
             get(download_deck_as_anki),
         )
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100MB limit
         .leptos_routes_with_context(
             &app_state,
             routes,

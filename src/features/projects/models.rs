@@ -30,6 +30,7 @@ pub struct ProjectFile {
     pub project_id: i64,
     pub original_filename: String,
     pub file_size: i64,
+    pub processing_status: String,
     pub created_at: String,
     pub text_preview: Option<String>,
 }

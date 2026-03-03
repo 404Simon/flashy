@@ -2,7 +2,7 @@
 use std::{path::Path, process::Stdio, time::Duration};
 
 #[cfg(feature = "ssr")]
-pub const MAX_PDF_BYTES: u64 = 20 * 1024 * 1024;
+pub const MAX_PDF_BYTES: u64 = 50 * 1024 * 1024;
 #[cfg(feature = "ssr")]
 const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(20);
 
