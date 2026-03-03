@@ -10,8 +10,9 @@ use super::super::models::{Flashcard, GenerationJob, GenerationPrompt};
 pub const DEFAULT_PROMPT_TEMPLATE: &str = r#"# Agent Instructions: Flashcards for $DECK_TITLE$
 
 ### 1. Card Formatting
-* **MathJax Requirement:** Use `\(` and `\)` for inline math and `\[` and `\]` for display math.
-    * *Example:* `\(O(n \log n)\)`, `\(\Sigma\)`, `\(G=(V,E)\)`.
+* **MathJax Requirement:** Use `\\(` and `\\)` for inline math and `\\[` and `\\]` for display math.
+    * **CRITICAL:** You MUST escape backslashes in your JSON output. Use double backslashes: `\\(`, `\\)`, `\\[`, `\\]`.
+    * *Example:* `\\(O(n \\log n)\\)`, `\\(\\Sigma\\)`, `\\(G=(V,E)\\)`.
 * **Structure:**
     * **Front:** Concise question or "Formally define [Topic]."
     * **Back:** Scannable bulleted lists.
@@ -26,8 +27,14 @@ For every algorithm/concept, generate cards covering:
 
 ### 3. Execution Logic
 1. Parse `pdftotext` output.
-2. Ensure all mathematical symbols are wrapped in **MathJax** delimiters.
+2. Ensure all mathematical symbols are wrapped in **MathJax** delimiters with **properly escaped backslashes** (`\\(`, `\\)`, `\\[`, `\\]`).
 3. Generate comprehensive flashcards covering all major concepts, definitions, algorithms, and formulas.
+
+### 4. JSON Escaping Rules
+**IMPORTANT:** Your response must be valid JSON. Remember to:
+* Escape all backslashes as double backslashes: `\\` becomes `\\\\` in JSON strings
+* For LaTeX math delimiters: use `\\(` and `\\)` for inline, `\\[` and `\\]` for display
+* Example valid JSON: `{"front": "What is \\\\(O(n \\\\log n)\\\\)?", "back": "Linearithmic complexity"}`
 
 Here is the document text:
 
