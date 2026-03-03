@@ -1,0 +1,126 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Version (e.g. v0.2.0)'
+        required: true
+        type: string
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format vX.Y.Z (e.g., v0.2.0)"
+            exit 1
+          fi
+          echo "Version format is valid: ${{ inputs.version }}"
+
+  bump-and-tag:
+    needs: [validate-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Get current month for cache key
+        id: month
+        run: echo "month=$(date +%Y-%m)" >> $GITHUB_OUTPUT
+
+      - name: Cache cargo-edit
+        id: cache-cargo-edit
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-set-version
+            ~/.cargo/bin/cargo-add
+            ~/.cargo/bin/cargo-rm
+            ~/.cargo/bin/cargo-upgrade
+          key: ${{ runner.os }}-cargo-edit-${{ steps.month.outputs.month }}
+
+      - name: Install cargo-edit
+        if: steps.cache-cargo-edit.outputs.cache-hit != 'true'
+        run: cargo install cargo-edit
+
+      - name: Bump version in Cargo.toml
+        run: |
+          CLEAN_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
+          echo "Updating version to $CLEAN_VERSION"
+          cargo set-version "$CLEAN_VERSION"
+
+      - name: Verify version was updated
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+          EXPECTED_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
+
+          if [ "$CARGO_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "Error: Version mismatch. Expected $EXPECTED_VERSION but got $CARGO_VERSION"
+            exit 1
+          fi
+
+          echo "Version successfully updated to $CARGO_VERSION"
+
+      - name: Commit and tag
+        run: |
+          CLEAN_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: release v$CLEAN_VERSION [no ci]"
+
+          git tag "${{ inputs.version }}"
+
+          git push
+          git push origin "${{ inputs.version }}"
+
+          echo "## Version Bump Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: $(git rev-parse HEAD)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh release create "${{ inputs.version }}" \
+            --draft=false \
+            --latest \
+            --generate-notes \
+            --title "Release ${{ inputs.version }}" \
+            --notes "This release was automatically created by GitHub Actions.
+
+          ## Installation
+
+          ### Docker Compose
+          
+          Download the \`docker-compose.yml\` and the \`.env.example\`, rename it to \`.env\`, create a \`data\` directory and start it.
+
+          \`\`\`bash
+          docker compose up -d
+          \`\`\`
+
+          ### Docker
+
+          \`\`\`bash
+          docker pull ghcr.io/${{ github.repository }}:${{ inputs.version }}
+          docker run -p 8080:8080 -v ./data:/app/data ghcr.io/${{ github.repository }}:${{ inputs.version }}
+          \`\`\`
+
+          ### Binary
+
+          Download the binary assets below, extract it, and run:
+          \`\`\`bash
+          ./run.sh
+          \`\`\`"

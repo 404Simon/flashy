@@ -1,0 +1,14 @@
+# Cargo audit configuration
+
+[advisories]
+# RSA timing sidechannel vulnerability in sqlx-mysql
+# We only use SQLite and never MySQL, so this is not exploitable in our application
+# Issue tracked: https://github.com/RustSec/advisory-db/issues/RUSTSEC-2023-0071
+# We've set default-features = false on sqlx but the macro still pulls in mysql support
+#
+# paste crate - unmaintained but required by Leptos framework
+# Monitoring for Leptos to migrate away from it
+ignore = [
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2024-0436"
+]

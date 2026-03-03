@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-artifacts:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-artifacts.yml
+
+  upload-release-assets:
+    needs: [build-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME=${{ github.ref_name }}
+          cd artifacts
+
+          echo "## Release Assets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Uploading artifacts for release $TAG_NAME..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          for dir in */; do
+            archive=$(find "$dir" -type f \( -name "*.tar.gz" -o -name "*.zip" \) | head -n 1)
+            if [ -n "$archive" ]; then
+              echo "- Uploading: $archive" >> $GITHUB_STEP_SUMMARY
+              gh release upload "$TAG_NAME" "$archive" --clobber
+            fi
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All artifacts uploaded successfully!" >> $GITHUB_STEP_SUMMARY
+
+  build-docker:
+    needs: [upload-release-assets]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      push: true
+      tags: ${{ github.ref_name }},latest
