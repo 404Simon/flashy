@@ -117,7 +117,7 @@ pub fn DeckDetailPage() -> impl IntoView {
             };
 
             leptos::task::spawn_local(async move {
-                if let Ok(_) = update_deck(id, name, description).await {
+                if update_deck(id, name, description).await.is_ok() {
                     deck_resource.refetch();
                     show_rename_modal.set(false);
                 }
@@ -143,7 +143,7 @@ pub fn DeckDetailPage() -> impl IntoView {
                     if confirmed {
                         let project_id = deck.project_id;
                         leptos::task::spawn_local(async move {
-                            if let Ok(_) = delete_deck(id).await {
+                            if delete_deck(id).await.is_ok() {
                                 leptos_router::hooks::use_navigate()(
                                     &format!("/projects/{}/decks", project_id),
                                     Default::default(),
@@ -157,7 +157,7 @@ pub fn DeckDetailPage() -> impl IntoView {
                 {
                     let project_id = deck.project_id;
                     leptos::task::spawn_local(async move {
-                        if let Ok(_) = delete_deck(id).await {
+                        if delete_deck(id).await.is_ok() {
                             leptos_router::hooks::use_navigate()(
                                 &format!("/projects/{}/decks", project_id),
                                 Default::default(),
@@ -350,7 +350,7 @@ pub fn DeckDetailPage() -> impl IntoView {
             // Generation Modal
             <Show when=move || show_generate_modal.get()>
                 <GenerationModal
-                    deck_id=Signal::derive(move || deck_id())
+                    deck_id=Signal::derive(deck_id)
                     files=Signal::derive(move || {
                         project_files_resource.get()
                             .flatten()

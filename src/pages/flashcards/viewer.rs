@@ -230,7 +230,6 @@ fn FlashcardViewer(
         <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-8">
             {move || match card.get() {
                 Some(card) => {
-                    let on_toggle = on_toggle.clone();
                     view! {
                         <div class="space-y-8">
                             <div class="min-h-[200px]">

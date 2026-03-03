@@ -91,7 +91,10 @@ pub fn AdminInvitesPage() -> impl IntoView {
                             </>
                         }.into_any(),
                         Some(Err(e)) => view! { <> <p>{e.to_string()}</p> </> }.into_any(),
-                        None => view! { <> </> }.into_any(),
+                        None => {
+                            let _: () = view! { <> </> };
+                            ().into_any()
+                        },
                     }}}
                 </Show>
             </Show>

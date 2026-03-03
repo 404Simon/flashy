@@ -311,13 +311,19 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                         Some(Err(err)) => view! {
                                             <p class="text-sm text-rose-300">{err.to_string()}</p>
                                         }.into_any(),
-                                        None => view! { <> </> }.into_any(),
+                                        None => {
+                                            let _: () = view! { <> </> };
+                                            ().into_any()
+                                        },
                                     }}}
                                 </Show>
                             </div>
                         }.into_any(),
                         Some(Err(err)) => view! { <> <p class="text-sm text-rose-300">{err.to_string()}</p> </> }.into_any(),
-                        None => view! { <> </> }.into_any(),
+                        None => {
+                            let _: () = view! { <> </> };
+                            ().into_any()
+                        },
                     }}}
                 </Show>
             </Show>
@@ -420,7 +426,7 @@ fn format_number(num: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
 
     for (i, ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(*ch);

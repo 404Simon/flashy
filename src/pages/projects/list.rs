@@ -89,7 +89,10 @@ pub fn ProjectsPage() -> impl IntoView {
                             Some(Err(err)) => view! {
                                 <p class="text-sm text-rose-300">{err.to_string()}</p>
                             }.into_any(),
-                            None => view! { <> </> }.into_any(),
+                            None => {
+                                let _: () = view! { <> </> };
+                                ().into_any()
+                            },
                         }}}
                     </Show>
                 </div>
