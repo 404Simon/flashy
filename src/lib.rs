@@ -1,3 +1,4 @@
+#![recursion_limit = "1024"]
 pub mod app;
 pub mod app_state;
 pub mod config;
