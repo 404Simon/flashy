@@ -7,10 +7,7 @@ pub const MAX_PDF_BYTES: u64 = 20 * 1024 * 1024;
 const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(feature = "ssr")]
-pub async fn extract_text_with_pdftotext(
-    pdf_path: &Path,
-    pdf_size: u64,
-) -> Result<String, String> {
+pub async fn extract_text_with_pdftotext(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
     if pdf_size > MAX_PDF_BYTES {
         return Err("Uploaded PDF exceeded the size limit".to_string());
     }

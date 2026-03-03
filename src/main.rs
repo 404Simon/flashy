@@ -1,9 +1,9 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use axum::extract::DefaultBodyLimit;
     use axum::routing::{get, post};
     use axum::Router;
-    use axum::extract::DefaultBodyLimit;
     use flashy::{
         app::*,
         app_state::AppState,

@@ -14,6 +14,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let project_id = move || params.with(|p| p.get("id").and_then(|id| id.parse::<i64>().ok()));
+    #[allow(clippy::redundant_closure)]
     let project_id_signal = Signal::derive(move || project_id());
 
     let project_resource = LocalResource::new(move || {
@@ -174,15 +175,15 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                                                             "PDF"
                                                                         </button>
                                                                     </div>
-                                                                    {if has_preview {
+                                                                    {move || -> AnyView { if has_preview {
                                                                         view! {
-                                                                            <p class="mt-3 max-h-32 overflow-hidden text-xs text-slate-400 whitespace-pre-line">{preview}</p>
-                                                                        }
+                                                                            <p class="mt-3 max-h-32 overflow-hidden text-xs text-slate-400 whitespace-pre-line">{preview.clone()}</p>
+                                                                        }.into_any()
                                                                     } else {
                                                                         view! {
                                                                             <p class="mt-3 text-xs text-slate-500">"No extractable text found."</p>
-                                                                        }
-                                                                    }}
+                                                                        }.into_any()
+                                                                    }}}
                                                                 </li>
                                                             }
                                                         }).collect_view()}

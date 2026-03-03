@@ -64,7 +64,7 @@ pub async fn ensure_admin_user(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Erro
     let admin_email = std::env::var("ADMIN_EMAIL").ok();
 
     let password_hash = hash_password(&admin_password)
-        .map_err(|e| sqlx::Error::Protocol(format!("bcrypt error: {e}").into()))?;
+        .map_err(|e| sqlx::Error::Protocol(format!("bcrypt error: {e}")))?;
 
     sqlx::query!(
         r#"

@@ -72,25 +72,27 @@ pub fn AdminInvitesPage() -> impl IntoView {
                     when=move || invites_resource.get().is_some()
                     fallback=move || view! { <p>"Loading..."</p> }
                 >
-                    {move || match invites_resource.get() {
+                    {move || -> AnyView { match invites_resource.get() {
                         Some(Ok(invites)) => view! {
-                            <div>
-                                <ul class="space-y-2 text-sm text-slate-300">
-                                    {invites.into_iter().map(|invite| view! {
-                                        <li class="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
-                                            <div class="font-mono text-slate-100">{format!("/invite/{}", invite.token)}</div>
-                                            <div class="text-xs text-slate-400">
-                                                {format!("{} days · uses {}", invite.duration_days, invite.uses)}
-                                                {if invite.is_reusable { " · reusable" } else { " · single-use" }}
-                                            </div>
-                                        </li>
-                                    }).collect_view()}
-                                </ul>
-                            </div>
-                        }.into_view(),
-                        Some(Err(e)) => view! { <div><p>{e.to_string()}</p></div> }.into_view(),
-                        None => view! { <div><span></span></div> }.into_view(),
-                    }}
+                            <>
+                                <div>
+                                    <ul class="space-y-2 text-sm text-slate-300">
+                                        {invites.into_iter().map(|invite| view! {
+                                            <li class="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
+                                                <div class="font-mono text-slate-100">{format!("/invite/{}", invite.token)}</div>
+                                                <div class="text-xs text-slate-400">
+                                                    {format!("{} days · uses {}", invite.duration_days, invite.uses)}
+                                                    {if invite.is_reusable { " · reusable" } else { " · single-use" }}
+                                                </div>
+                                            </li>
+                                        }).collect_view()}
+                                    </ul>
+                                </div>
+                            </>
+                        }.into_any(),
+                        Some(Err(e)) => view! { <> <p>{e.to_string()}</p> </> }.into_any(),
+                        None => view! { <> </> }.into_any(),
+                    }}}
                 </Show>
             </Show>
         </section>

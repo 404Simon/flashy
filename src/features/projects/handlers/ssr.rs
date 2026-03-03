@@ -51,11 +51,7 @@ pub async fn get_project_pdf(
         .clone()
         .unwrap_or_else(|| "application/pdf".to_string());
     let content_length = object.content_length;
-    let body = Body::from_stream(
-        object
-            .body
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
-    );
+    let body = Body::from_stream(object.body.map_err(std::io::Error::other));
 
     let mut response = body.into_response();
     let headers = response.headers_mut();
