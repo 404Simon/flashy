@@ -1,10 +1,66 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
+use pulldown_cmark::{html, Options, Parser};
+use regex::Regex;
+use std::sync::OnceLock;
 
 use crate::features::{
     auth::models::UserSession,
     flashcards::{get_deck, list_flashcards, Flashcard},
 };
+
+fn get_display_math_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"\\\[(?s)(.*?)\\\]").unwrap())
+}
+
+fn get_inline_math_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"\\\((?s)(.*?)\\\)").unwrap())
+}
+
+fn markdown_to_html(markdown: &str) -> String {
+    use std::collections::HashMap;
+
+    // Step 1: Extract and protect LaTeX math expressions
+    let mut math_map = HashMap::new();
+    let mut counter = 0;
+
+    // Protect display math \[ ... \] first (do this before inline to avoid conflicts)
+    let display_math_re = get_display_math_regex();
+    let protected_text = display_math_re.replace_all(markdown, |caps: &regex::Captures| {
+        let placeholder = format!("DISPLAYMATH{}", counter);
+        math_map.insert(placeholder.clone(), caps[0].to_string());
+        counter += 1;
+        placeholder
+    });
+
+    // Protect inline math \( ... \)
+    let inline_math_re = get_inline_math_regex();
+    let protected_text = inline_math_re.replace_all(&protected_text, |caps: &regex::Captures| {
+        let placeholder = format!("INLINEMATH{}", counter);
+        math_map.insert(placeholder.clone(), caps[0].to_string());
+        counter += 1;
+        placeholder
+    });
+
+    // Step 2: Convert markdown to HTML
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let parser = Parser::new_ext(&protected_text, options);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+
+    // Step 3: Restore LaTeX math expressions
+    for (placeholder, original) in math_map {
+        html_output = html_output.replace(&placeholder, &original);
+    }
+
+    html_output
+}
 
 #[component]
 pub fn DeckDetailPage() -> impl IntoView {
@@ -93,15 +149,16 @@ pub fn DeckDetailPage() -> impl IntoView {
                                     }.into_any(),
                                     Some(Ok(cards)) => {
                                         let total_cards = cards.len();
+                                        let cards_clone = cards.clone();
                                         view! {
                                             <div class="space-y-6">
                                                 <div class="flex items-center justify-between text-sm text-slate-400">
-                                                    <span>{format!("Card {} of {}", current_card_index.get() + 1, total_cards)}</span>
+                                                    <span>{move || format!("Card {} of {}", current_card_index.get() + 1, total_cards)}</span>
                                                     <span>{format!("{} cards total", total_cards)}</span>
                                                 </div>
 
                                                 <FlashcardViewer
-                                                    card=Signal::derive(move || cards.get(current_card_index.get()).cloned())
+                                                    card=Signal::derive(move || cards_clone.get(current_card_index.get()).cloned())
                                                     show_answer=show_answer.read_only()
                                                     on_toggle=toggle_answer
                                                 />
@@ -125,7 +182,10 @@ pub fn DeckDetailPage() -> impl IntoView {
                                                     <button
                                                         class="inline-flex items-center rounded-full border border-slate-700 px-6 py-2 text-sm font-semibold text-slate-300 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed"
                                                         on:click=move |_| next_card()
-                                                        disabled=move || current_card_index.get() >= total_cards - 1
+                                                        disabled={
+                                                            let total = total_cards;
+                                                            move || current_card_index.get() >= total - 1
+                                                        }
                                                     >
                                                         "Next →"
                                                     </button>
@@ -181,6 +241,18 @@ fn FlashcardViewer(
         }
     });
 
+    let front_html = Signal::derive(move || {
+        card.get()
+            .map(|c| markdown_to_html(&c.front))
+            .unwrap_or_default()
+    });
+
+    let back_html = Signal::derive(move || {
+        card.get()
+            .map(|c| markdown_to_html(&c.back))
+            .unwrap_or_default()
+    });
+
     view! {
         <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-8">
             {move || match card.get() {
@@ -192,7 +264,7 @@ fn FlashcardViewer(
                                 <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">"Question"</h3>
                                 <div
                                     class="mathjax-content text-lg text-white prose prose-invert max-w-none"
-                                    inner_html=card.front.clone()
+                                    inner_html=move || front_html.get()
                                 ></div>
                             </div>
 
@@ -201,7 +273,7 @@ fn FlashcardViewer(
                                     <h3 class="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">"Answer"</h3>
                                     <div
                                         class="mathjax-content text-base text-slate-200 prose prose-invert max-w-none"
-                                        inner_html=card.back.clone()
+                                        inner_html=move || back_html.get()
                                     ></div>
 
                                     {card.document_reference.as_ref().map(|doc_ref| view! {

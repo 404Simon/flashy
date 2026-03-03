@@ -34,6 +34,8 @@ serde_json = { version = "1", optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 web-sys = { version = "0.3", optional = true }
 js-sys = { version = "0.3", optional = true }
+pulldown-cmark = "0.12"
+regex = "1"
 
 [features]
 hydrate = [
