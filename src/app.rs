@@ -72,6 +72,7 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("login") view=LoginPage/>
                     <Route path=path!("/register/:token") view=RegisterPage/>
                     <Route path=path!("/invite/:token") view=InvitePage/>
+                    <Route path=StaticSegment("settings") view=SettingsPage/>
                     <Route path=StaticSegment("projects") view=ProjectsPage/>
                     <Route path=path!("/projects/:id") view=ProjectDetailPage/>
                     <Route path=path!("/projects/:id/decks") view=DecksPage/>

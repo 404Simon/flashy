@@ -6,6 +6,7 @@ pub mod config_handlers;
 pub mod db;
 pub mod features;
 pub mod pages;
+pub mod validation;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]

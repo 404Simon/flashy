@@ -51,6 +51,7 @@ pub fn HomePage() -> impl IntoView {
                                 <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/admin/invites">"Manage invites"</a>
                             </Show>
                             <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/projects">"My projects"</a>
+                            <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/settings">"Settings"</a>
                             <button
                                 class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400"
                                 on:click=move |_| {
