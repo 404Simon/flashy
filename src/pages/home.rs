@@ -48,7 +48,7 @@ pub fn HomePage() -> impl IntoView {
                         <div class="flex flex-wrap items-center gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
                             <p class="text-slate-300">{format!("Logged in as {}", user.username)}</p>
                             <Show when=move || user.is_admin>
-                                <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/admin/invites">"Manage invites"</a>
+                                <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/admin/invites">"Admin"</a>
                             </Show>
                             <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/projects">"My projects"</a>
                             <a class="rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400" href="/settings">"Settings"</a>

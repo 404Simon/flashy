@@ -79,6 +79,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/decks/:deck_id") view=DeckDetailPage/>
                     <Route path=path!("/decks/:deck_id/study") view=DeckViewerPage/>
                     <Route path=path!("/admin/invites") view=AdminInvitesPage/>
+                    <Route path=path!("/admin/users") view=AdminUsersPage/>
                 </Routes>
             </main>
         </Router>
