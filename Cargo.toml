@@ -23,7 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 dotenvy = { version = "0.15", optional = true }
 serde = { version = "1", features = ["derive"] }
 bcrypt = { version = "0.19", optional = true }
-tower-sessions = { version = "0.14", optional = true }
+tower-sessions = { version = "0.15", optional = true }
 tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], default-features = false, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
