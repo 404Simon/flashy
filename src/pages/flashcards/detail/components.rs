@@ -87,19 +87,27 @@ fn GenerationJobCard(job: GenerationJobWithFile) -> impl IntoView {
         _ => "border-slate-500/40 bg-slate-500/10 text-slate-200",
     };
 
+    let segment_suffix = job
+        .segment_label
+        .as_ref()
+        .map(|label| format!(" · {}", label))
+        .unwrap_or_default();
     let status_text = match job.status.as_str() {
-        "pending" => format!("Waiting to start - {}", job.file_name),
-        "processing" => format!("Generating flashcards from {}", job.file_name),
+        "pending" => format!("Waiting to start - {}{}", job.file_name, segment_suffix),
+        "processing" => format!(
+            "Generating flashcards from {}{}",
+            job.file_name, segment_suffix
+        ),
         "completed" => format!(
-            "Completed - {} cards generated from {}",
-            job.cards_generated, job.file_name
+            "Completed - {} cards generated from {}{}",
+            job.cards_generated, job.file_name, segment_suffix
         ),
         "failed" => job
             .error_message
             .as_deref()
-            .map(|msg| format!("Failed: {} ({})", msg, job.file_name))
-            .unwrap_or_else(|| format!("Generation failed ({})", job.file_name)),
-        _ => format!("Unknown status ({})", job.file_name),
+            .map(|msg| format!("Failed: {} ({}{})", msg, job.file_name, segment_suffix))
+            .unwrap_or_else(|| format!("Generation failed ({}{})", job.file_name, segment_suffix)),
+        _ => format!("Unknown status ({}{})", job.file_name, segment_suffix),
     };
 
     view! {

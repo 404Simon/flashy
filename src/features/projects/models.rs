@@ -35,3 +35,30 @@ pub struct ProjectFile {
     pub text_preview: Option<String>,
     pub word_count: Option<i64>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SegmentRange {
+    pub start_page: i64,
+    pub end_page: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PdfTocEntry {
+    pub id: String,
+    pub title: String,
+    pub level: i64,
+    pub start_page: i64,
+    pub end_page: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PdfOutlineResponse {
+    pub total_pages: i64,
+    pub entries: Vec<PdfTocEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SegmentStats {
+    pub page_count: i64,
+    pub word_count: i64,
+}

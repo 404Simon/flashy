@@ -20,10 +20,12 @@ pub fn DeckDetailPage() -> impl IntoView {
     let user = Signal::derive(move || user_resource.get().and_then(|r| r.ok()).flatten());
 
     let params = use_params_map();
-    let deck_id = move || params.with(|p| p.get("deck_id").and_then(|id| id.parse::<i64>().ok()));
+    let deck_id = Signal::derive(move || {
+        params.with(|p| p.get("deck_id").and_then(|id| id.parse::<i64>().ok()))
+    });
 
     let deck_resource = LocalResource::new(move || {
-        let id = deck_id();
+        let id = deck_id.get();
         async move {
             let id = id.ok_or_else(|| ServerFnError::new("Invalid deck"))?;
             get_deck(id).await
@@ -31,7 +33,7 @@ pub fn DeckDetailPage() -> impl IntoView {
     });
 
     let files_resource = LocalResource::new(move || {
-        let id = deck_id();
+        let id = deck_id.get();
         async move {
             let id = id.ok_or_else(|| ServerFnError::new("Invalid deck"))?;
             list_files_with_cards_for_deck(id).await
@@ -39,7 +41,7 @@ pub fn DeckDetailPage() -> impl IntoView {
     });
 
     let jobs_resource = LocalResource::new(move || {
-        let id = deck_id();
+        let id = deck_id.get();
         async move {
             let id = id.ok_or_else(|| ServerFnError::new("Invalid deck"))?;
             list_generation_jobs_with_files_for_deck(id).await
@@ -84,11 +86,11 @@ pub fn DeckDetailPage() -> impl IntoView {
     // Poll for job updates
     #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {
-        let _ = deck_id();
+        let _ = deck_id.get_untracked();
         let _handle = leptos::task::spawn_local(async move {
             loop {
                 gloo_timers::future::sleep(std::time::Duration::from_secs(5)).await;
-                if deck_id().is_some() {
+                if deck_id.get_untracked().is_some() {
                     jobs_resource.refetch();
                     files_resource.refetch();
                 } else {
@@ -107,7 +109,7 @@ pub fn DeckDetailPage() -> impl IntoView {
     };
 
     let handle_rename_submit = move || {
-        if let Some(id) = deck_id() {
+        if let Some(id) = deck_id.get_untracked() {
             let name = rename_name.get();
             let desc = rename_description.get();
             let description = if desc.trim().is_empty() {
@@ -126,7 +128,7 @@ pub fn DeckDetailPage() -> impl IntoView {
     };
 
     let handle_delete = move || {
-        if let Some(id) = deck_id() {
+        if let Some(id) = deck_id.get_untracked() {
             if let Some(Ok(deck)) = deck_resource.get() {
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -350,7 +352,7 @@ pub fn DeckDetailPage() -> impl IntoView {
             // Generation Modal
             <Show when=move || show_generate_modal.get()>
                 <GenerationModal
-                    deck_id=Signal::derive(deck_id)
+                    deck_id=deck_id
                     files=Signal::derive(move || {
                         project_files_resource.get()
                             .flatten()
@@ -364,7 +366,7 @@ pub fn DeckDetailPage() -> impl IntoView {
             // Cards Modal
             <Show when=move || show_cards_modal.get()>
                 {move || {
-                    let deck_id_val = deck_id().unwrap_or(0);
+                    let deck_id_val = deck_id.get().unwrap_or(0);
                     view! {
                         <components::FileCardsModal
                             file=Signal::derive(move || selected_file.get())
