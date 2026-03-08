@@ -65,6 +65,8 @@ pub struct GenerationJob {
     pub file_id: i64,
     pub user_id: i64,
     pub prompt_template: Option<String>,
+    pub segment_label: Option<String>,
+    pub segment_ranges: Option<String>,
     pub status: String, // pending, processing, completed, failed
     pub cards_generated: i64,
     pub error_message: Option<String>,
@@ -86,6 +88,7 @@ pub struct GenerationJobWithFile {
     pub id: i64,
     pub file_id: i64,
     pub file_name: String,
+    pub segment_label: Option<String>,
     pub status: String,
     pub cards_generated: i64,
     pub error_message: Option<String>,

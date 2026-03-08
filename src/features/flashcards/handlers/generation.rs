@@ -280,6 +280,8 @@ pub async fn start_generation_job(
     deck_id: i64,
     file_id: i64,
     prompt_template: Option<String>,
+    segment_label: Option<String>,
+    segment_ranges: Option<Vec<crate::features::projects::models::SegmentRange>>,
 ) -> Result<GenerationJob, ServerFnError> {
     use sqlx::SqlitePool;
 
@@ -318,14 +320,28 @@ pub async fn start_generation_job(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("File not found or access denied"))?;
 
+    let segment_label = segment_label
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty());
+    let segment_ranges = segment_ranges.filter(|ranges| !ranges.is_empty());
+    let segment_ranges_json = match segment_ranges {
+        Some(ranges) => Some(
+            serde_json::to_string(&ranges)
+                .map_err(|e| ServerFnError::new(format!("Invalid segment ranges: {e}")))?,
+        ),
+        None => None,
+    };
+
     // Create the job
     let result = sqlx::query(
-        "INSERT INTO generation_jobs (deck_id, file_id, user_id, prompt_template, status) VALUES (?, ?, ?, ?, 'pending')"
+        "INSERT INTO generation_jobs (deck_id, file_id, user_id, prompt_template, segment_label, segment_ranges, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
     )
     .bind(deck_id)
     .bind(file_id)
     .bind(user.id)
     .bind(prompt_template)
+    .bind(segment_label)
+    .bind(segment_ranges_json)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -339,16 +355,18 @@ pub async fn start_generation_job(
 
     // Spawn background task to process the job
     let pool_clone = pool.clone();
+    let app_state = expect_context::<crate::app_state::AppState>();
+    let app_state_clone = app_state.clone();
     tokio::spawn(async move {
         println!("→ Starting background processing for job {}", job_id);
-        if let Err(e) = process_generation_job(job_id, pool_clone).await {
+        if let Err(e) = process_generation_job(job_id, pool_clone, app_state_clone).await {
             eprintln!("✗ Error processing generation job {}: {}", job_id, e);
         }
     });
 
     // Fetch and return the created job
     let job = sqlx::query_as::<_, GenerationJob>(
-        "SELECT id, deck_id, file_id, user_id, prompt_template, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE id = ?"
+        "SELECT id, deck_id, file_id, user_id, prompt_template, segment_label, segment_ranges, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE id = ?"
     )
     .bind(job_id)
     .fetch_one(&pool)
@@ -366,7 +384,7 @@ pub async fn get_generation_job(job_id: i64) -> Result<GenerationJob, ServerFnEr
     let pool = expect_context::<SqlitePool>();
 
     let job = sqlx::query_as::<_, GenerationJob>(
-        "SELECT id, deck_id, file_id, user_id, prompt_template, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE id = ? AND user_id = ?"
+        "SELECT id, deck_id, file_id, user_id, prompt_template, segment_label, segment_ranges, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE id = ? AND user_id = ?"
     )
     .bind(job_id)
     .bind(user.id)
@@ -404,7 +422,7 @@ pub async fn list_generation_jobs_for_deck(
     .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
 
     let jobs = sqlx::query_as::<_, GenerationJob>(
-        "SELECT id, deck_id, file_id, user_id, prompt_template, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE deck_id = ? AND user_id = ? ORDER BY created_at DESC"
+        "SELECT id, deck_id, file_id, user_id, prompt_template, segment_label, segment_ranges, status, cards_generated, error_message, created_at, updated_at, completed_at FROM generation_jobs WHERE deck_id = ? AND user_id = ? ORDER BY created_at DESC"
     )
     .bind(deck_id)
     .bind(user.id)
@@ -446,6 +464,7 @@ pub async fn list_generation_jobs_with_files_for_deck(
             gj.id as "id!: i64",
             gj.file_id as "file_id!: i64",
             pf.original_filename as "file_name!: String",
+            gj.segment_label as "segment_label: String",
             gj.status as "status!: String",
             gj.cards_generated as "cards_generated!: i64",
             gj.error_message as "error_message: String",
@@ -468,6 +487,7 @@ pub async fn list_generation_jobs_with_files_for_deck(
             id: row.id,
             file_id: row.file_id,
             file_name: row.file_name,
+            segment_label: row.segment_label,
             status: row.status,
             cards_generated: row.cards_generated,
             error_message: row.error_message,
@@ -480,6 +500,7 @@ pub async fn list_generation_jobs_with_files_for_deck(
 async fn process_generation_job(
     job_id: i64,
     pool: sqlx::SqlitePool,
+    app_state: crate::app_state::AppState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use sqlx::Row;
 
@@ -498,9 +519,9 @@ async fn process_generation_job(
     // Fetch job details
     let job = sqlx::query(
         r#"
-        SELECT gj.deck_id, gj.file_id, gj.prompt_template,
+        SELECT gj.deck_id, gj.file_id, gj.prompt_template, gj.segment_label, gj.segment_ranges,
                fd.name as deck_name,
-               pf.extracted_text, pf.original_filename
+               pf.extracted_text, pf.original_filename, pf.s3_bucket, pf.s3_key
         FROM generation_jobs gj
         INNER JOIN flashcard_decks fd ON gj.deck_id = fd.id
         INNER JOIN project_files pf ON gj.file_id = pf.id
@@ -511,19 +532,48 @@ async fn process_generation_job(
     .fetch_one(&pool)
     .await?;
 
-    let extracted_text: Option<String> = job.try_get("extracted_text")?;
-    let extracted_text = extracted_text.ok_or("File has no extracted text")?;
     let deck_name: String = job.try_get("deck_name")?;
     let file_name: String = job.try_get("original_filename")?;
     let deck_id: i64 = job.try_get("deck_id")?;
     let file_id: i64 = job.try_get("file_id")?;
     let prompt_template: Option<String> = job.try_get("prompt_template")?;
+    let segment_label: Option<String> = job.try_get("segment_label")?;
+    let segment_ranges: Option<String> = job.try_get("segment_ranges")?;
+
+    let extracted_text = if let Some(segment_ranges) = segment_ranges {
+        let ranges: Vec<crate::features::projects::models::SegmentRange> =
+            serde_json::from_str(&segment_ranges)?;
+        let s3_bucket: String = job.try_get("s3_bucket")?;
+        let s3_key: String = job.try_get("s3_key")?;
+        let (temp_path, pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
+            &app_state.minio_client,
+            &s3_bucket,
+            &s3_key,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        crate::features::projects::processing::extract_text_for_ranges_with_pdftotext(
+            temp_path.as_ref(),
+            pdf_size,
+            &ranges,
+        )
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        let extracted_text: Option<String> = job.try_get("extracted_text")?;
+        extracted_text.ok_or("File has no extracted text")?
+    };
 
     println!(
-        "📋 [Job {}] Processing deck '{}' with file '{}' ({} chars of text)",
+        "📋 [Job {}] Processing deck '{}' with file '{}'{} ({} chars of text)",
         job_id,
         deck_name,
         file_name,
+        segment_label
+            .as_ref()
+            .map(|label| format!(" · Segment: {}", label))
+            .unwrap_or_default(),
         extracted_text.len()
     );
 
