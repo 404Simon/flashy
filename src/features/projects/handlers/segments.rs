@@ -124,7 +124,7 @@ pub async fn get_project_file_outline(file_id: i64) -> Result<PdfOutlineResponse
 #[server(GetSegmentStats)]
 pub async fn get_segment_stats(
     file_id: i64,
-    ranges: Vec<SegmentRange>,
+    ranges: Option<Vec<SegmentRange>>,
 ) -> Result<SegmentStats, ServerFnError> {
     use sqlx::SqlitePool;
 
@@ -134,7 +134,8 @@ pub async fn get_segment_stats(
 
     let row = sqlx::query!(
         r#"
-        SELECT pf.s3_key as "s3_key!: String", pf.s3_bucket as "s3_bucket!: String"
+        SELECT pf.s3_key as "s3_key!: String", pf.s3_bucket as "s3_bucket!: String",
+               pf.extracted_text as "extracted_text: String"
         FROM project_files pf
         INNER JOIN study_projects sp ON sp.id = pf.project_id
         WHERE pf.id = ? AND sp.user_id = ?
@@ -147,11 +148,42 @@ pub async fn get_segment_stats(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("File not found or access denied"))?;
 
-    let merged = merge_ranges(&ranges);
+    let merged = match ranges {
+        Some(ranges) => merge_ranges(&ranges),
+        None => Vec::new(),
+    };
+
+    // If no ranges provided, use the full extracted text
     if merged.is_empty() {
+        let extracted_text = row
+            .extracted_text
+            .ok_or_else(|| ServerFnError::new("File has no extracted text"))?;
+        let word_count = extracted_text.split_whitespace().count() as i64;
+
+        // For page count, we need to download and check the PDF
+        let (temp_path, _pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
+            &app_state.minio_client,
+            &row.s3_bucket,
+            &row.s3_key,
+        )
+        .await
+        .map_err(ServerFnError::new)?;
+
+        // Get page count from the PDF
+        let page_count = tokio::task::spawn_blocking(move || -> Result<i64, String> {
+            use lopdf::Document;
+            use std::path::Path;
+            let doc = Document::load(temp_path.as_ref() as &Path)
+                .map_err(|e| format!("Failed to read PDF: {e}"))?;
+            Ok(doc.get_pages().len() as i64)
+        })
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .map_err(ServerFnError::new)?;
+
         return Ok(SegmentStats {
-            page_count: 0,
-            word_count: 0,
+            page_count,
+            word_count,
         });
     }
 

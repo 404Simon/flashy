@@ -483,6 +483,7 @@ fn SegmentModal(
     let stats_request_id = RwSignal::new(0u64);
     let selected_deck_id = RwSignal::new(None::<i64>);
     let segment_label = RwSignal::new(String::new());
+    let use_entire_file = RwSignal::new(false);
 
     Effect::new(move |_| {
         if let Some(Ok(outline)) = outline_resource.get() {
@@ -523,16 +524,25 @@ fn SegmentModal(
     });
 
     Effect::new(move |_| {
-        let entries = outline_entries.get();
-        let selected = selected_ids.get();
-        let ranges = ranges_from_selection(&entries, &selected);
-        selected_ranges.set(ranges);
+        let use_full_file = use_entire_file.get();
+        if use_full_file {
+            // When using entire file, clear selected ranges
+            selected_ranges.set(Vec::new());
+        } else {
+            let entries = outline_entries.get();
+            let selected = selected_ids.get();
+            let ranges = ranges_from_selection(&entries, &selected);
+            selected_ranges.set(ranges);
+        }
     });
 
     let segment_alive_for_stats = Arc::clone(&segment_alive);
     Effect::new(move |_| {
+        let use_full_file = use_entire_file.get();
         let ranges = selected_ranges.get();
-        if ranges.is_empty() {
+
+        // If not using entire file and no ranges selected, clear stats
+        if !use_full_file && ranges.is_empty() {
             stats.set(None);
             stats_loading.set(false);
             stats_error.set(None);
@@ -550,8 +560,10 @@ fn SegmentModal(
         let stats_error = stats_error;
         let stats_request_id = stats_request_id;
         let segment_alive = Arc::clone(&segment_alive_for_stats);
+        // Determine ranges before moving into async block
+        let ranges_to_use = if use_full_file { None } else { Some(ranges) };
         leptos::task::spawn_local(async move {
-            match get_segment_stats(file_id, ranges).await {
+            match get_segment_stats(file_id, ranges_to_use).await {
                 Ok(result) => {
                     if !segment_alive.load(Ordering::Relaxed) {
                         return;
@@ -575,14 +587,17 @@ fn SegmentModal(
     });
 
     let page_count = Signal::derive(move || {
-        let ranges = selected_ranges.get();
-        count_pages(&ranges)
+        if use_entire_file.get() {
+            total_pages.get().unwrap_or(0)
+        } else {
+            let ranges = selected_ranges.get();
+            count_pages(&ranges)
+        }
     });
 
     let can_generate = Signal::derive(move || {
-        selected_deck_id.get().is_some()
-            && !selected_ranges.get().is_empty()
-            && !action.pending().get()
+        let has_selection = use_entire_file.get() || !selected_ranges.get().is_empty();
+        selected_deck_id.get().is_some() && has_selection && !action.pending().get()
     });
 
     view! {
@@ -644,7 +659,27 @@ fn SegmentModal(
                             </div>
                         </div>
 
-                        <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+                        <label class="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 cursor-pointer hover:border-slate-600">
+                            <input
+                                type="checkbox"
+                                class="h-4 w-4 rounded border-slate-600 bg-slate-950 text-indigo-400"
+                                prop:checked=move || use_entire_file.get()
+                                on:change=move |ev| {
+                                    let checked = event_target_checked(&ev);
+                                    use_entire_file.set(checked);
+                                    if checked {
+                                        // Clear chapter selections when using entire file
+                                        selected_ids.update(|set| set.clear());
+                                    }
+                                }
+                            />
+                            <div class="flex-1">
+                                <p class="text-sm font-medium text-slate-200">"Use entire file"</p>
+                                <p class="text-xs text-slate-500">"Generate flashcards from all pages, not just selected chapters"</p>
+                            </div>
+                        </label>
+
+                        <div class=move || format!("rounded-2xl border border-slate-800 bg-slate-900/40 p-4 {}", if use_entire_file.get() { "opacity-40 pointer-events-none" } else { "" })>
                             <Show
                                 when=move || outline_resource.get().is_some() || toc_timed_out.get()
                                 fallback=move || view! {
@@ -670,6 +705,12 @@ fn SegmentModal(
                                                     "Try again"
                                                 </button>
                                             </div>
+                                        }.into_any()
+                                    } else if use_entire_file.get() {
+                                        view! {
+                                            <p class="text-sm text-slate-400">
+                                                "Using entire file - chapter selection disabled"
+                                            </p>
                                         }.into_any()
                                     } else {
                                         match outline_resource.get() {
@@ -761,15 +802,19 @@ fn SegmentModal(
                                 <p class="text-sm font-semibold text-slate-200">"Segment summary"</p>
                                 <p class="text-xs text-slate-500">
                                     {move || {
-                                        let selected_count = selected_ids.get().len();
-                                        if selected_count == 0 {
-                                            "Select chapters to build a segment.".to_string()
+                                        if use_entire_file.get() {
+                                            "Using entire file for generation.".to_string()
                                         } else {
-                                            format!(
-                                                "{} chapter{} selected",
-                                                selected_count,
-                                                if selected_count == 1 { "" } else { "s" }
-                                            )
+                                            let selected_count = selected_ids.get().len();
+                                            if selected_count == 0 {
+                                                "Select chapters to build a segment.".to_string()
+                                            } else {
+                                                format!(
+                                                    "{} chapter{} selected",
+                                                    selected_count,
+                                                    if selected_count == 1 { "" } else { "s" }
+                                                )
+                                            }
                                         }
                                     }}
                                 </p>
@@ -891,17 +936,23 @@ fn SegmentModal(
                                 type="button"
                                 on:click=move |_| {
                                     if let Some(deck_id) = selected_deck_id.get() {
-                                        let ranges = selected_ranges.get();
-                                        if ranges.is_empty() {
-                                            return;
-                                        }
+                                        let use_full = use_entire_file.get();
+                                        let ranges = if use_full {
+                                            None // Pass None to use entire file
+                                        } else {
+                                            let ranges = selected_ranges.get();
+                                            if ranges.is_empty() {
+                                                return;
+                                            }
+                                            Some(ranges)
+                                        };
                                         let label = segment_label.get();
                                         action.dispatch(StartGenerationJob {
                                             deck_id,
                                             file_id: file.id,
                                             prompt_template: None,
                                             segment_label: if label.trim().is_empty() { None } else { Some(label) },
-                                            segment_ranges: Some(ranges),
+                                            segment_ranges: ranges,
                                         });
                                     }
                                 }
