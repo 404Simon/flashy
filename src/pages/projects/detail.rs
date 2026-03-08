@@ -253,7 +253,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                                                     open_segment_modal(file_for_segment.clone());
                                                                 }
                                                             >
-                                                                "Segment"
+                                                                "Generate ✨"
                                                             </button>
                                                         }
                                                         .into_any()
@@ -907,7 +907,7 @@ fn SegmentModal(
                                 }
                                 disabled=move || !can_generate.get()
                             >
-                                "Generate Flashcards"
+                                "Generate ✨"
                             </button>
                         </div>
                     </div>

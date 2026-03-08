@@ -1,11 +1,7 @@
 use leptos::prelude::*;
 
-use crate::features::{
-    flashcards::{
-        list_flashcards_by_file, markdown::markdown_to_html, FileCardGroup, GenerationJobWithFile,
-        StartGenerationJob, DEFAULT_PROMPT_TEMPLATE,
-    },
-    projects::models::ProjectFile,
+use crate::features::flashcards::{
+    list_flashcards_by_file, markdown::markdown_to_html, FileCardGroup, GenerationJobWithFile,
 };
 
 // ============= ACTION BAR =============
@@ -14,7 +10,6 @@ use crate::features::{
 pub fn ActionBar(
     on_rename: impl Fn() + 'static + Copy,
     on_delete: impl Fn() + 'static + Copy,
-    on_generate: impl Fn() + 'static + Copy,
     deck_id: i64,
 ) -> impl IntoView {
     view! {
@@ -40,12 +35,13 @@ pub fn ActionBar(
                 >
                     "Study Cards"
                 </a>
-                <button
+                <a
                     class="inline-flex items-center rounded-full bg-white px-6 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
-                    on:click=move |_| on_generate()
+                    href=format!("/api/decks/{}/download/anki", deck_id)
+                    download
                 >
-                    "+ Add Cards via AI"
-                </button>
+                    "↓ Download as Anki"
+                </a>
             </div>
         </div>
     }
@@ -271,121 +267,6 @@ pub fn FileCardsModal(
                     >
                         "Close"
                     </button>
-                </div>
-            </div>
-        </div>
-    }
-}
-
-// ============= GENERATION MODAL =============
-
-#[component]
-pub fn GenerationModal(
-    deck_id: Signal<Option<i64>>,
-    files: Signal<Vec<ProjectFile>>,
-    action: ServerAction<StartGenerationJob>,
-    on_close: impl Fn() + 'static + Copy + Send,
-) -> impl IntoView {
-    let selected_file_id = RwSignal::new(None::<i64>);
-    let custom_prompt = RwSignal::new(String::from(DEFAULT_PROMPT_TEMPLATE));
-
-    view! {
-        <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-6"
-            on:click=move |_| on_close()
-        >
-            <div
-                class="w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl max-h-[90vh] overflow-y-auto"
-                on:click=move |ev| ev.stop_propagation()
-            >
-                <div class="border-b border-slate-800 px-6 py-4">
-                    <h3 class="text-lg font-semibold text-white">"Generate Flashcards from PDF"</h3>
-                </div>
-                <div class="p-6">
-                    <ActionForm action=action>
-                        <div class="space-y-4">
-                            <input type="hidden" name="deck_id" value=move || deck_id.get().unwrap_or(0) />
-
-                            <div class="flex flex-col gap-2 text-sm text-slate-300">
-                                <label>"Select PDF"</label>
-                                <select
-                                    class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100"
-                                    name="file_id"
-                                    required
-                                    on:change=move |ev| {
-                                        let value = event_target_value(&ev);
-                                        selected_file_id.set(value.parse::<i64>().ok());
-                                    }
-                                >
-                                    <option value="">"Choose a PDF..."</option>
-                                    {move || {
-                                        files.get().into_iter().map(|file| {
-                                            let id = file.id.to_string();
-                                            let name = file.original_filename.clone();
-                                            view! {
-                                                <option value=id>{name}</option>
-                                            }
-                                        }).collect_view()
-                                    }}
-                                </select>
-                            </div>
-
-                            <label class="flex flex-col gap-2 text-sm text-slate-300">
-                                "Custom Prompt (optional)"
-                                <textarea
-                                    class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100 font-mono text-xs min-h-[200px]"
-                                    name="prompt_template"
-                                    placeholder=DEFAULT_PROMPT_TEMPLATE
-                                    prop:value=move || custom_prompt.get()
-                                    on:input=move |ev| custom_prompt.set(event_target_value(&ev))
-                                ></textarea>
-                                <span class="text-xs text-slate-500">"Leave empty to use default prompt. Use $DECK_TITLE$ and $DOCUMENT_TEXT$ as placeholders."</span>
-                            </label>
-
-                            <Show when=move || action.pending().get()>
-                                <div class="rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
-                                    "Starting generation job..."
-                                </div>
-                            </Show>
-
-                            <Show when=move || {
-                                action.value().get().as_ref().and_then(|r| r.as_ref().err()).is_some()
-                            }>
-                                {move || action.value().get().as_ref().and_then(|r| r.as_ref().err()).map(|err| view! {
-                                    <div class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
-                                        {err.to_string()}
-                                    </div>
-                                })}
-                            </Show>
-
-                            <Show when=move || {
-                                action.value().get().as_ref().and_then(|r| r.as_ref().ok()).is_some()
-                            }>
-                                {move || action.value().get().as_ref().and_then(|r| r.as_ref().ok()).map(|_job| view! {
-                                    <div class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
-                                        "Generation job started! Cards will appear here when ready."
-                                    </div>
-                                })}
-                            </Show>
-
-                            <div class="flex gap-3 pt-2">
-                                <button
-                                    class="flex-1 rounded-full border border-slate-700 px-6 py-2 text-sm font-semibold text-slate-300"
-                                    type="button"
-                                    on:click=move |_| on_close()
-                                >
-                                    "Close"
-                                </button>
-                                <button
-                                    class="flex-1 rounded-full bg-white px-6 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
-                                    type="submit"
-                                    disabled=move || action.pending().get()
-                                >
-                                    "Start Generation"
-                                </button>
-                            </div>
-                        </div>
-                    </ActionForm>
                 </div>
             </div>
         </div>

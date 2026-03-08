@@ -72,19 +72,10 @@ pub fn DeckViewerPage() -> impl IntoView {
                     {move || match deck_resource.get() {
                         Some(Ok(deck)) => view! {
                             <div class="space-y-2">
-                                <div class="flex items-center justify-between">
-                                    <a
-                                        class="text-sm text-slate-400 hover:text-white"
-                                        href=format!("/decks/{}", deck.id)
-                                    >"← Back to deck"</a>
-                                    <a
-                                        class="inline-flex items-center rounded-full border border-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-300 hover:border-slate-400 hover:bg-slate-900"
-                                        href=format!("/api/decks/{}/download/anki", deck.id)
-                                        download
-                                    >
-                                        "↓ Download as Anki"
-                                    </a>
-                                </div>
+                                <a
+                                    class="text-sm text-slate-400 hover:text-white"
+                                    href=format!("/decks/{}", deck.id)
+                                >"← Back to deck"</a>
                                 <h1 class="text-4xl font-semibold text-white">{deck.name.clone()}</h1>
                                 {deck.description.as_ref().map(|desc| view! {
                                     <p class="text-slate-300">{desc.clone()}</p>

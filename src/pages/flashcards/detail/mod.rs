@@ -5,13 +5,12 @@ use crate::features::{
     auth::models::UserSession,
     flashcards::{
         delete_deck, get_deck, list_files_with_cards_for_deck,
-        list_generation_jobs_with_files_for_deck, update_deck, StartGenerationJob,
+        list_generation_jobs_with_files_for_deck, update_deck,
     },
-    projects::handlers::list_project_files,
 };
 
 mod components;
-use components::{ActionBar, FileCardGroupList, GenerationJobsList, GenerationModal};
+use components::{ActionBar, FileCardGroupList, GenerationJobsList};
 
 #[component]
 pub fn DeckDetailPage() -> impl IntoView {
@@ -50,38 +49,10 @@ pub fn DeckDetailPage() -> impl IntoView {
 
     // Modals
     let show_rename_modal = RwSignal::new(false);
-    let show_generate_modal = RwSignal::new(false);
     let show_cards_modal = RwSignal::new(false);
     let selected_file = RwSignal::new(None::<crate::features::flashcards::FileCardGroup>);
     let rename_name = RwSignal::new(String::new());
     let rename_description = RwSignal::new(String::new());
-
-    // For generation modal
-    let project_id = Signal::derive(move || {
-        deck_resource
-            .get()
-            .and_then(|r| r.ok())
-            .map(|d| d.project_id)
-    });
-
-    let project_files_resource = LocalResource::new(move || async move {
-        if let Some(proj_id) = project_id.get() {
-            list_project_files(proj_id).await.ok()
-        } else {
-            None
-        }
-    });
-
-    let start_job_action = ServerAction::<StartGenerationJob>::new();
-
-    // Refresh when job starts
-    Effect::new(move |_| {
-        if start_job_action.value().get().is_some() {
-            show_generate_modal.set(false);
-            jobs_resource.refetch();
-            files_resource.refetch();
-        }
-    });
 
     // Poll for job updates
     #[cfg(target_arch = "wasm32")]
@@ -204,7 +175,6 @@ pub fn DeckDetailPage() -> impl IntoView {
                                 <ActionBar
                                     on_rename=handle_rename
                                     on_delete=handle_delete
-                                    on_generate=move || show_generate_modal.set(true)
                                     deck_id=deck.id
                                 />
 
@@ -347,20 +317,6 @@ pub fn DeckDetailPage() -> impl IntoView {
                         </div>
                     </div>
                 </div>
-            </Show>
-
-            // Generation Modal
-            <Show when=move || show_generate_modal.get()>
-                <GenerationModal
-                    deck_id=deck_id
-                    files=Signal::derive(move || {
-                        project_files_resource.get()
-                            .flatten()
-                            .unwrap_or_default()
-                    })
-                    action=start_job_action
-                    on_close=move || show_generate_modal.set(false)
-                />
             </Show>
 
             // Cards Modal
