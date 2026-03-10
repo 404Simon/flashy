@@ -83,7 +83,7 @@ RUN cargo install sqlx-cli --no-default-features --features sqlite --locked \
 # =============================================================================
 # Stage 4: Runner - Debian slim with runtime dependencies
 # =============================================================================
-FROM debian:12-slim
+FROM debian:13-slim
 
 # Install runtime dependencies
 RUN apt-get update && \
