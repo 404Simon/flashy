@@ -81,10 +81,17 @@ RUN cargo install sqlx-cli --no-default-features --features sqlite --locked \
   cargo install sqlx-cli --no-default-features --features sqlite --locked
 
 # =============================================================================
-# Stage 4: Runner - Distroless minimal runtime image
+# Stage 4: Runner - Debian slim with runtime dependencies
 # =============================================================================
-# :debug needed for busybox shell for entrypoint script
-FROM gcr.io/distroless/cc-debian12:debug
+FROM debian:12-slim
+
+# Install runtime dependencies
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    poppler-utils \
+    wget \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -108,6 +115,6 @@ EXPOSE 8080
 VOLUME ["/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["/busybox/wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
+  CMD ["wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
 
-ENTRYPOINT ["/busybox/sh", "/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
