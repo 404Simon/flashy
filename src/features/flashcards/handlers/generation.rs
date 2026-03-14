@@ -19,9 +19,10 @@ pub const DEFAULT_PROMPT_TEMPLATE: &str = r#"# Agent Instructions: Flashcards fo
 * **MathJax Requirement:** Use `\\(` and `\\)` for inline math and `\\[` and `\\]` for display math.
     * **CRITICAL:** You MUST escape backslashes in your JSON output. Use double backslashes: `\\(`, `\\)`, `\\[`, `\\]`.
     * *Example:* `\\(O(n \\log n)\\)`, `\\(\\Sigma\\)`, `\\(G=(V,E)\\)`.
+    * **IMPORTANT:** Only use LaTeX for mathematical formulas. For all other content (lists, formatting, structure), use standard Markdown syntax.
 * **Structure:**
     * **Front:** Concise question or "Formally define [Topic]."
-    * **Back:** Scannable bulleted lists.
+    * **Back:** Scannable bulleted lists using Markdown (-, *, or numbered lists).
 
 ### 2. Mandatory Content Tiers
 For every algorithm/concept, generate cards covering:
