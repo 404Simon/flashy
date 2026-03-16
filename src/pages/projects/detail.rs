@@ -484,6 +484,20 @@ fn SegmentModal(
     let selected_deck_id = RwSignal::new(None::<i64>);
     let segment_label = RwSignal::new(String::new());
     let use_entire_file = RwSignal::new(false);
+    let segment_download_url = Signal::derive(move || {
+        if use_entire_file.get() {
+            return None;
+        }
+        let ranges = selected_ranges.get();
+        if ranges.is_empty() {
+            return None;
+        }
+        let query = ranges_to_query(&ranges);
+        Some(format!(
+            "/api/projects/{}/files/{}/segment-pdf?ranges={}",
+            project_id, file.id, query
+        ))
+    });
 
     Effect::new(move |_| {
         if let Some(Ok(outline)) = outline_resource.get() {
@@ -863,6 +877,18 @@ fn SegmentModal(
                                     on:input=move |ev| segment_label.set(event_target_value(&ev))
                                 />
                             </label>
+
+                            <Show when=move || segment_download_url.get().is_some()>
+                                {move || segment_download_url.get().map(|url| view! {
+                                    <a
+                                        class="inline-flex w-full items-center justify-center rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-400"
+                                        href=url
+                                        target="_blank"
+                                    >
+                                        "Download segment PDF"
+                                    </a>
+                                })}
+                            </Show>
                         </div>
 
                         <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
@@ -1014,6 +1040,14 @@ fn ranges_from_selection(
         .collect();
 
     merge_ranges_for_ui(&mut ranges)
+}
+
+fn ranges_to_query(ranges: &[SegmentRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| format!("{}-{}", range.start_page, range.end_page))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn descendant_ids(entries: &[PdfTocEntry], index: usize) -> Vec<String> {
