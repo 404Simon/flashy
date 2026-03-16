@@ -7,13 +7,14 @@ use std::sync::{
     Arc,
 };
 
+use crate::components::modal::Modal;
 use crate::config_handlers::get_app_config;
 use crate::features::{
     auth::models::UserSession,
     flashcards::{list_decks_for_project, StartGenerationJob},
     projects::handlers::{
         delete_project_file, get_project, get_project_file_outline, get_project_file_text,
-        get_segment_stats, list_project_files,
+        get_segment_stats, list_project_files, SaveSegmentPdf,
     },
     projects::models::{PdfTocEntry, SegmentRange, SegmentStats},
 };
@@ -444,6 +445,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
                         file=file
                         project_id=project_id_value
                         on_close=move || close_modals()
+                        on_saved=move || files_resource.refetch()
                     />
                 })
             }}
@@ -457,6 +459,7 @@ fn SegmentModal(
     file: crate::features::projects::models::ProjectFile,
     project_id: i64,
     on_close: impl Fn() + 'static + Copy + Send,
+    on_saved: impl Fn() + 'static + Copy + Send,
 ) -> impl IntoView {
     let segment_alive = Arc::new(AtomicBool::new(true));
     {
@@ -484,18 +487,30 @@ fn SegmentModal(
     let selected_deck_id = RwSignal::new(None::<i64>);
     let segment_label = RwSignal::new(String::new());
     let use_entire_file = RwSignal::new(false);
-    let segment_download_url = Signal::derive(move || {
-        if use_entire_file.get() {
+    let save_modal_open = RwSignal::new(false);
+    let save_name = RwSignal::new(String::new());
+    let save_action = ServerAction::<SaveSegmentPdf>::new();
+    let has_segment_selection =
+        Signal::derive(move || !use_entire_file.get() && !selected_ranges.get().is_empty());
+    let save_enabled = Signal::derive(move || {
+        has_segment_selection.get()
+            && !save_name.get().trim().is_empty()
+            && !save_action.pending().get()
+    });
+    let download_url = Signal::derive(move || {
+        if !has_segment_selection.get() {
+            return None;
+        }
+        let trimmed = save_name.get().trim().to_string();
+        if trimmed.is_empty() {
             return None;
         }
         let ranges = selected_ranges.get();
-        if ranges.is_empty() {
-            return None;
-        }
         let query = ranges_to_query(&ranges);
+        let name = sanitize_filename_for_url(&trimmed);
         Some(format!(
-            "/api/projects/{}/files/{}/segment-pdf?ranges={}",
-            project_id, file.id, query
+            "/api/projects/{}/files/{}/segment-pdf?ranges={}&name={}",
+            project_id, file.id, query, name
         ))
     });
 
@@ -612,6 +627,14 @@ fn SegmentModal(
     let can_generate = Signal::derive(move || {
         let has_selection = use_entire_file.get() || !selected_ranges.get().is_empty();
         selected_deck_id.get().is_some() && has_selection && !action.pending().get()
+    });
+
+    Effect::new(move |_| {
+        if let Some(Ok(_)) = save_action.value().get() {
+            save_modal_open.set(false);
+            save_name.set(String::new());
+            on_saved();
+        }
     });
 
     view! {
@@ -878,17 +901,22 @@ fn SegmentModal(
                                 />
                             </label>
 
-                            <Show when=move || segment_download_url.get().is_some()>
-                                {move || segment_download_url.get().map(|url| view! {
-                                    <a
-                                        class="inline-flex w-full items-center justify-center rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-400"
-                                        href=url
-                                        target="_blank"
-                                    >
-                                        "Download segment PDF"
-                                    </a>
-                                })}
-                            </Show>
+                            <button
+                                class="w-full rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-400 disabled:opacity-50"
+                                type="button"
+                                disabled=move || !has_segment_selection.get()
+                                on:click=move |_| {
+                                    if save_name.get().trim().is_empty() {
+                                        let label = segment_label.get();
+                                        if !label.trim().is_empty() {
+                                            save_name.set(label);
+                                        }
+                                    }
+                                    save_modal_open.set(true);
+                                }
+                            >
+                                "Save Selection"
+                            </button>
                         </div>
 
                         <div class="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
@@ -991,6 +1019,82 @@ fn SegmentModal(
                 </div>
             </div>
         </div>
+        <Modal
+            show=Signal::derive(move || save_modal_open.get())
+            on_close=move || save_modal_open.set(false)
+            title="Save selection".to_string()
+            max_width="max-w-xl".to_string()
+        >
+            <div class="space-y-4">
+                <label class="flex flex-col gap-2 text-sm text-slate-300">
+                    "PDF name"
+                    <input
+                        class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100"
+                        type="text"
+                        placeholder="e.g., Chapter-1-notes.pdf"
+                        prop:value=move || save_name.get()
+                        on:input=move |ev| save_name.set(event_target_value(&ev))
+                    />
+                </label>
+
+                <Show when=move || {
+                    save_action.value().get().as_ref().and_then(|r| r.as_ref().err()).is_some()
+                }>
+                    {move || save_action.value().get().as_ref().and_then(|r| r.as_ref().err()).map(|err| view! {
+                        <div class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+                            {err.to_string()}
+                        </div>
+                    })}
+                </Show>
+
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <button
+                        class="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                        type="button"
+                        disabled=move || !save_enabled.get()
+                        on:click=move |_| {
+                            if !has_segment_selection.get() {
+                                return;
+                            }
+                            let name = save_name.get().trim().to_string();
+                            if name.is_empty() {
+                                return;
+                            }
+                            let ranges = selected_ranges.get();
+                            save_action.dispatch(SaveSegmentPdf {
+                                project_id,
+                                file_id: file.id,
+                                ranges,
+                                name,
+                            });
+                        }
+                    >
+                        {move || if save_action.pending().get() { "Saving..." } else { "Save to Project" }}
+                    </button>
+
+                    <Show when=move || download_url.get().is_some()>
+                        {move || download_url.get().map(|url| view! {
+                            <a
+                                class="inline-flex items-center justify-center rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-400"
+                                href=url
+                                target="_blank"
+                            >
+                                "Download"
+                            </a>
+                        })}
+                    </Show>
+                    <Show when=move || download_url.get().is_none()>
+                        <button
+                            class="rounded-full border border-slate-800 bg-slate-900/40 px-4 py-2 text-sm font-semibold text-slate-400"
+                            type="button"
+                            disabled=true
+                        >
+                            "Download"
+                        </button>
+                    </Show>
+                </div>
+            </div>
+        </Modal>
     }
 }
 
@@ -1048,6 +1152,23 @@ fn ranges_to_query(ranges: &[SegmentRange]) -> String {
         .map(|range| format!("{}-{}", range.start_page, range.end_page))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn sanitize_filename_for_url(name: &str) -> String {
+    let mut cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect();
+
+    if cleaned.is_empty() {
+        cleaned = "segment.pdf".to_string();
+    }
+
+    if !cleaned.to_lowercase().ends_with(".pdf") {
+        cleaned.push_str(".pdf");
+    }
+
+    cleaned
 }
 
 fn descendant_ids(entries: &[PdfTocEntry], index: usize) -> Vec<String> {

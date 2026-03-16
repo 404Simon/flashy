@@ -83,6 +83,7 @@ pub async fn get_project_pdf(
 #[derive(serde::Deserialize)]
 pub struct SegmentPdfQuery {
     ranges: String,
+    name: Option<String>,
 }
 
 #[cfg(feature = "ssr")]
@@ -138,67 +139,23 @@ pub async fn get_project_segment_pdf(
     .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))?;
 
     let pdf_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        use lopdf::Document;
-
         let path: &std::path::Path = temp_path.as_ref();
-        let mut doc = Document::load(path)
-            .map_err(|e| format!("Failed to read PDF: {e}"))?;
-        let total_pages = doc.get_pages().len() as i64;
-        if total_pages == 0 {
-            return Err("PDF has no pages".to_string());
-        }
-
-        let merged = merge_ranges_for_export(&ranges);
-        let mut pages: Vec<u32> = Vec::new();
-        for range in merged {
-            if range.start_page > total_pages {
-                continue;
-            }
-            let start = range.start_page.max(1).min(total_pages);
-            let end = range.end_page.max(start).min(total_pages);
-            for page in start..=end {
-                pages.push(page as u32);
-            }
-        }
-
-        pages.sort_unstable();
-        pages.dedup();
-
-        if pages.is_empty() {
-            return Err("No valid pages selected".to_string());
-        }
-
-        use std::collections::HashSet;
-
-        let keep: HashSet<u32> = pages.into_iter().collect();
-        let delete_pages: Vec<u32> = doc
-            .get_pages()
-            .keys()
-            .copied()
-            .filter(|page| !keep.contains(page))
-            .collect();
-
-        doc.delete_pages(&delete_pages);
-        doc.prune_objects();
-
-        let mut buffer = Vec::new();
-        doc.save_to(&mut buffer)
-            .map_err(|e| format!("Failed to save PDF: {e}"))?;
-        Ok(buffer)
+        crate::features::projects::processing::build_segment_pdf_bytes(path, &ranges)
     })
     .await
     .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let filename = build_segment_filename(&row.original_filename);
+    let filename = query
+        .name
+        .as_deref()
+        .map(crate::features::projects::processing::sanitize_filename)
+        .unwrap_or_else(|| build_segment_filename(&row.original_filename));
     let pdf_len = pdf_bytes.len();
     let body = Body::from(pdf_bytes);
     let mut response = body.into_response();
     let headers = response.headers_mut();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("application/pdf"),
-    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/pdf"));
     headers.insert(
         CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename)).map_err(|_| {
@@ -323,7 +280,7 @@ pub async fn upload_project_file(
         }
 
         // Upload to S3 first
-        let sanitized_name = sanitize_filename(&file_name);
+        let sanitized_name = crate::features::projects::processing::sanitize_filename(&file_name);
         let key = format!(
             "{}/{}/{}-{}",
             state.object_key_prefix,
@@ -381,7 +338,13 @@ pub async fn upload_project_file(
         // Spawn background task for text extraction
         let pool_clone = state.db_pool.clone();
         tokio::spawn(async move {
-            if let Err(e) = process_file_async(file_id, temp_path_buf, pool_clone).await {
+            if let Err(e) = crate::features::projects::processing::process_file_async(
+                file_id,
+                temp_path_buf,
+                pool_clone,
+            )
+            .await
+            {
                 eprintln!("Error processing file {}: {}", file_id, e);
             }
         });
@@ -400,74 +363,8 @@ pub async fn upload_project_file(
 }
 
 #[cfg(feature = "ssr")]
-async fn process_file_async(
-    file_id: i64,
-    temp_path: std::path::PathBuf,
-    pool: sqlx::SqlitePool,
-) -> Result<(), String> {
-    use crate::features::projects::processing::extract_text_with_pdftotext;
-
-    // Update status to processing
-    sqlx::query("UPDATE project_files SET processing_status = 'processing' WHERE id = ?")
-        .bind(file_id)
-        .execute(&pool)
-        .await
-        .map_err(|e: sqlx::Error| e.to_string())?;
-
-    // Get file size for extraction
-    let file_size = tokio::fs::metadata(&temp_path)
-        .await
-        .map_err(|e| e.to_string())?
-        .len();
-
-    // Extract text
-    let result = match extract_text_with_pdftotext(&temp_path, file_size).await {
-        Ok(extracted_text) => {
-            sqlx::query("UPDATE project_files SET extracted_text = ?, processing_status = 'completed' WHERE id = ?")
-                .bind(extracted_text)
-                .bind(file_id)
-                .execute(&pool)
-                .await
-                .map_err(|e: sqlx::Error| e.to_string())
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            sqlx::query("UPDATE project_files SET processing_status = 'failed' WHERE id = ?")
-                .bind(file_id)
-                .execute(&pool)
-                .await
-                .map_err(|e: sqlx::Error| e.to_string())?;
-            Err(error_msg)
-        }
-    };
-
-    // Clean up the temporary file
-    let _ = tokio::fs::remove_file(&temp_path).await;
-
-    result.map(|_| ())
-}
-
-#[cfg(feature = "ssr")]
-fn sanitize_filename(filename: &str) -> String {
-    let mut cleaned: String = filename
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        .collect();
-
-    if cleaned.is_empty() {
-        cleaned = "slides.pdf".to_string();
-    }
-
-    if !cleaned.to_lowercase().ends_with(".pdf") {
-        cleaned.push_str(".pdf");
-    }
-
-    cleaned
-}
-
-#[cfg(feature = "ssr")]
 fn build_segment_filename(original: &str) -> String {
-    let cleaned = sanitize_filename(original);
+    let cleaned = crate::features::projects::processing::sanitize_filename(original);
     match cleaned.strip_suffix(".pdf") {
         Some(stem) => format!("{stem}-segment.pdf"),
         None => format!("{cleaned}-segment.pdf"),
@@ -475,7 +372,9 @@ fn build_segment_filename(original: &str) -> String {
 }
 
 #[cfg(feature = "ssr")]
-fn parse_segment_ranges(raw: &str) -> Result<Vec<crate::features::projects::models::SegmentRange>, String> {
+fn parse_segment_ranges(
+    raw: &str,
+) -> Result<Vec<crate::features::projects::models::SegmentRange>, String> {
     use crate::features::projects::models::SegmentRange;
 
     let mut ranges = Vec::new();
@@ -513,40 +412,4 @@ fn parse_segment_ranges(raw: &str) -> Result<Vec<crate::features::projects::mode
     }
 
     Ok(ranges)
-}
-
-#[cfg(feature = "ssr")]
-fn merge_ranges_for_export(
-    ranges: &[crate::features::projects::models::SegmentRange],
-) -> Vec<crate::features::projects::models::SegmentRange> {
-    use crate::features::projects::models::SegmentRange;
-
-    let mut sanitized: Vec<SegmentRange> = ranges
-        .iter()
-        .map(|range| {
-            let start = range.start_page.max(1);
-            let end = range.end_page.max(start);
-            SegmentRange {
-                start_page: start,
-                end_page: end,
-            }
-        })
-        .collect();
-
-    sanitized.sort_by_key(|range| (range.start_page, range.end_page));
-
-    let mut merged: Vec<SegmentRange> = Vec::new();
-    for range in sanitized {
-        if let Some(last) = merged.last_mut() {
-            if range.start_page <= last.end_page + 1 {
-                last.end_page = last.end_page.max(range.end_page);
-            } else {
-                merged.push(range);
-            }
-        } else {
-            merged.push(range);
-        }
-    }
-
-    merged
 }

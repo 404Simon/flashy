@@ -215,6 +215,139 @@ pub async fn get_segment_stats(
     })
 }
 
+#[server(SaveSegmentPdf)]
+pub async fn save_segment_pdf(
+    project_id: i64,
+    file_id: i64,
+    ranges: Vec<SegmentRange>,
+    name: String,
+) -> Result<i64, ServerFnError> {
+    use crate::config::Config;
+    use crate::features::projects::processing::{
+        build_segment_pdf_bytes, download_pdf_to_temp, process_file_async, sanitize_filename,
+    };
+    use sqlx::SqlitePool;
+    use tokio::io::AsyncWriteExt;
+    use tokio_util::io::ReaderStream;
+
+    let user = require_auth().await?;
+    let pool = expect_context::<SqlitePool>();
+    let app_state = expect_context::<crate::app_state::AppState>();
+
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(ServerFnError::new("File name is required"));
+    }
+    let cleaned_name = sanitize_filename(trimmed_name);
+
+    let row = sqlx::query!(
+        r#"
+        SELECT pf.s3_key as "s3_key!: String", pf.s3_bucket as "s3_bucket!: String"
+        FROM project_files pf
+        INNER JOIN study_projects sp ON sp.id = pf.project_id
+        WHERE pf.id = ? AND pf.project_id = ? AND sp.user_id = ?
+        "#,
+        file_id,
+        project_id,
+        user.id
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("File not found or access denied"))?;
+
+    let (temp_path, _pdf_size) =
+        download_pdf_to_temp(&app_state.minio_client, &row.s3_bucket, &row.s3_key)
+            .await
+            .map_err(ServerFnError::new)?;
+
+    let ranges_clone = ranges.clone();
+    let pdf_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let path: &std::path::Path = temp_path.as_ref();
+        build_segment_pdf_bytes(path, &ranges_clone)
+    })
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .map_err(ServerFnError::new)?;
+
+    let file_size = pdf_bytes.len() as u64;
+    let config = Config::global();
+    if file_size == 0 || file_size > config.max_pdf_bytes {
+        return Err(ServerFnError::new("Generated PDF exceeds size limits"));
+    }
+
+    let temp_file = tempfile::NamedTempFile::with_suffix(".pdf")
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let (temp_std_file, temp_path_handle) = temp_file.into_parts();
+    let mut temp_file = tokio::fs::File::from_std(temp_std_file);
+    temp_file
+        .write_all(&pdf_bytes)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    temp_file
+        .flush()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let key = format!(
+        "{}/{}/{}-{}",
+        app_state.object_key_prefix,
+        project_id,
+        uuid::Uuid::new_v4(),
+        cleaned_name
+    );
+
+    let temp_path_buf =
+        <tempfile::TempPath as AsRef<std::path::Path>>::as_ref(&temp_path_handle).to_path_buf();
+
+    let upload_file = tokio::fs::File::open(&temp_path_buf)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let upload_stream = ReaderStream::new(upload_file);
+
+    app_state
+        .minio_client
+        .objects()
+        .put(app_state.bucket_name.as_str(), &key)
+        .content_type("application/pdf")
+        .body_stream_sized(upload_stream, file_size)
+        .send()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let file_id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO project_files
+            (project_id, original_filename, content_type, file_size, s3_bucket, s3_key, processing_status)
+        VALUES
+            (?, ?, ?, ?, ?, ?, 'pending')
+        RETURNING id
+        "#,
+    )
+    .bind(project_id)
+    .bind(&cleaned_name)
+    .bind("application/pdf")
+    .bind(file_size as i64)
+    .bind(&app_state.bucket_name)
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let temp_path_buf = temp_path_handle
+        .keep()
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let pool_clone = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = process_file_async(file_id, temp_path_buf, pool_clone).await {
+            eprintln!("Error processing file {}: {}", file_id, e);
+        }
+    });
+
+    Ok(file_id)
+}
+
 #[cfg(feature = "ssr")]
 fn merge_ranges(ranges: &[SegmentRange]) -> Vec<SegmentRange> {
     let mut sanitized: Vec<SegmentRange> = ranges
