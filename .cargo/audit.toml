@@ -8,7 +8,13 @@
 #
 # paste crate - unmaintained but required by Leptos framework
 # Monitoring for Leptos to migrate away from it
+#
+# rustls-webpki CRL matching logic vulnerability
+# Blocked by AWS SDK dependency chain through llm crate (requires rustls 0.21.x)
+# Limited impact: requires compromised CA to exploit
+# Tracking upstream fix in aws-smithy-runtime
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2024-0436"
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0049"
 ]
