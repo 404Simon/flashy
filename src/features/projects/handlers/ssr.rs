@@ -8,7 +8,6 @@ pub async fn get_project_pdf(
     use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
     use axum::http::HeaderValue;
     use axum::response::IntoResponse;
-    use futures_util::TryStreamExt;
     use sqlx::SqlitePool;
 
     use crate::features::auth::utils::get_user_from_session;
@@ -40,8 +39,9 @@ pub async fn get_project_pdf(
 
     let object = state
         .minio_client
-        .objects()
-        .get(&row.s3_bucket, &row.s3_key)
+        .get_object()
+        .bucket(&row.s3_bucket)
+        .key(&row.s3_key)
         .send()
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
@@ -50,8 +50,16 @@ pub async fn get_project_pdf(
         .content_type
         .clone()
         .unwrap_or_else(|| "application/pdf".to_string());
-    let content_length = object.content_length;
-    let body = Body::from_stream(object.body.map_err(std::io::Error::other));
+    let content_length = object.content_length();
+
+    // Convert ByteStream to Body by collecting bytes
+    let bytes = object
+        .body
+        .collect()
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?
+        .into_bytes();
+    let body = Body::from(bytes);
 
     let mut response = body.into_response();
     let headers = response.headers_mut();
@@ -186,7 +194,6 @@ pub async fn upload_project_file(
     mut multipart: axum::extract::Multipart,
 ) -> Result<axum::response::Redirect, (axum::http::StatusCode, String)> {
     use tokio::io::AsyncWriteExt;
-    use tokio_util::io::ReaderStream;
 
     use sqlx::SqlitePool;
 
@@ -295,14 +302,21 @@ pub async fn upload_project_file(
         let upload_file = tokio::fs::File::open(&temp_path_buf)
             .await
             .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
-        let upload_stream = ReaderStream::new(upload_file);
+
+        let body = aws_sdk_s3::primitives::ByteStream::read_from()
+            .file(upload_file)
+            .build()
+            .await
+            .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
 
         state
             .minio_client
-            .objects()
-            .put(state.bucket_name.as_str(), &key)
+            .put_object()
+            .bucket(state.bucket_name.as_str())
+            .key(&key)
             .content_type("application/pdf")
-            .body_stream_sized(upload_stream, file_size)
+            .content_length(file_size as i64)
+            .body(body)
             .send()
             .await
             .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;

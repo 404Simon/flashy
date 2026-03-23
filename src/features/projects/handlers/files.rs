@@ -122,8 +122,9 @@ pub async fn delete_project_file(file_id: i64) -> Result<(), ServerFnError> {
     let app_state = expect_context::<crate::app_state::AppState>();
     app_state
         .minio_client
-        .objects()
-        .delete(&file_info.s3_bucket, &file_info.s3_key)
+        .delete_object()
+        .bucket(&file_info.s3_bucket)
+        .key(&file_info.s3_key)
         .send()
         .await
         .map_err(|e| ServerFnError::new(format!("Failed to delete file from storage: {}", e)))?;

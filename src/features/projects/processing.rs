@@ -2,9 +2,6 @@
 use std::{path::Path, process::Stdio, time::Duration};
 
 #[cfg(feature = "ssr")]
-use futures_util::TryStreamExt;
-
-#[cfg(feature = "ssr")]
 use crate::features::projects::models::SegmentRange;
 
 #[cfg(feature = "ssr")]
@@ -155,37 +152,31 @@ fn merge_ranges(ranges: &[SegmentRange]) -> Vec<SegmentRange> {
 
 #[cfg(feature = "ssr")]
 pub async fn download_pdf_to_temp(
-    minio_client: &s3::Client,
+    minio_client: &aws_sdk_s3::Client,
     bucket: &str,
     key: &str,
 ) -> Result<(tempfile::TempPath, u64), String> {
     use tokio::io::AsyncWriteExt;
 
     let object = minio_client
-        .objects()
-        .get(bucket, key)
+        .get_object()
+        .bucket(bucket)
+        .key(key)
         .send()
         .await
         .map_err(|e| format!("Failed to fetch PDF from storage: {e}"))?;
 
-    let mut size = object.content_length.unwrap_or(0);
+    let mut size = object.content_length().unwrap_or(0) as u64;
 
     let temp_file = tempfile::NamedTempFile::with_suffix(".pdf")
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
     let (temp_std_file, temp_path) = temp_file.into_parts();
     let mut temp_file = tokio::fs::File::from_std(temp_std_file);
 
-    let mut stream = object.body;
-    while let Some(chunk) = stream
-        .try_next()
+    let mut stream = object.body.into_async_read();
+    tokio::io::copy(&mut stream, &mut temp_file)
         .await
-        .map_err(|e| format!("Failed to read PDF stream: {e}"))?
-    {
-        temp_file
-            .write_all(&chunk)
-            .await
-            .map_err(|e| format!("Failed to write PDF: {e}"))?;
-    }
+        .map_err(|e| format!("Failed to copy PDF stream: {e}"))?;
 
     temp_file
         .flush()

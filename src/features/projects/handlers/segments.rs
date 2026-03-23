@@ -228,7 +228,6 @@ pub async fn save_segment_pdf(
     };
     use sqlx::SqlitePool;
     use tokio::io::AsyncWriteExt;
-    use tokio_util::io::ReaderStream;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
@@ -303,14 +302,21 @@ pub async fn save_segment_pdf(
     let upload_file = tokio::fs::File::open(&temp_path_buf)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let upload_stream = ReaderStream::new(upload_file);
+
+    let body = aws_sdk_s3::primitives::ByteStream::read_from()
+        .file(upload_file)
+        .build()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     app_state
         .minio_client
-        .objects()
-        .put(app_state.bucket_name.as_str(), &key)
+        .put_object()
+        .bucket(app_state.bucket_name.as_str())
+        .key(&key)
         .content_type("application/pdf")
-        .body_stream_sized(upload_stream, file_size)
+        .content_length(file_size as i64)
+        .body(body)
         .send()
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;

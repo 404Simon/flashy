@@ -1,5 +1,7 @@
 #[cfg(feature = "ssr")]
-use s3::{AddressingStyle, Auth, Client, Credentials};
+use aws_sdk_s3::config::{Credentials, Region};
+#[cfg(feature = "ssr")]
+use aws_sdk_s3::Client;
 
 #[cfg(feature = "ssr")]
 #[derive(Clone, Debug)]
@@ -45,38 +47,42 @@ impl MinioSettings {
 
 #[cfg(feature = "ssr")]
 pub async fn build_minio_client(settings: &MinioSettings) -> Result<Client, String> {
-    let creds = Credentials::new(&settings.access_key, &settings.secret_key)
-        .map_err(|e| format!("Failed to build MinIO credentials: {e}"))?;
+    let creds = Credentials::new(
+        &settings.access_key,
+        &settings.secret_key,
+        None,
+        None,
+        "static",
+    );
 
-    let mut builder = Client::builder(&settings.endpoint)
-        .map_err(|e| format!("Failed to build MinIO client: {e}"))?
-        .region(settings.region.clone())
-        .auth(Auth::Static(creds));
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .endpoint_url(&settings.endpoint)
+        .region(Region::new(settings.region.clone()))
+        .credentials_provider(creds)
+        .force_path_style(settings.force_path_style)
+        .build();
 
-    if settings.force_path_style {
-        builder = builder.addressing_style(AddressingStyle::Path);
-    }
+    let client = Client::from_conf(s3_config);
 
-    let client = builder
-        .build()
-        .map_err(|e| format!("Failed to finalize MinIO client: {e}"))?;
+    // Check if bucket exists
+    let head_result = client.head_bucket().bucket(&settings.bucket).send().await;
 
-    let head_result = client.buckets().head(&settings.bucket).send().await;
     let needs_create = match head_result {
         Ok(_) => false,
         Err(err) => {
-            if matches!(err, s3::Error::Api { status, .. } if status.as_u16() == 404) {
+            let service_err = err.into_service_error();
+            if service_err.is_not_found() {
                 true
             } else {
-                return Err(format!("Failed to check MinIO bucket: {err}"));
+                return Err(format!("Failed to check MinIO bucket: {service_err}"));
             }
         }
     };
 
     if needs_create {
         client
-            .buckets()
-            .create(&settings.bucket)
+            .create_bucket()
+            .bucket(&settings.bucket)
             .send()
             .await
             .map_err(|e| format!("Failed to create MinIO bucket: {e}"))?;

@@ -1,9 +1,9 @@
 #[cfg(feature = "ssr")]
+use aws_sdk_s3::Client;
+#[cfg(feature = "ssr")]
 use axum::extract::FromRef;
 #[cfg(feature = "ssr")]
 use leptos::prelude::LeptosOptions;
-#[cfg(feature = "ssr")]
-use s3::Client;
 #[cfg(feature = "ssr")]
 use sqlx::SqlitePool;
 

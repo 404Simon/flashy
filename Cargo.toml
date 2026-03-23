@@ -27,7 +27,8 @@ tower-sessions = { version = "0.14", optional = true }
 tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], default-features = false, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
-s3 = { version = "0.1.17", optional = true }
+aws-config = { version = "1.5", optional = true }
+aws-sdk-s3 = { version = "1.76", features = ["behavior-version-latest"], optional = true }
 tempfile = { version = "3", optional = true }
 llm = { version = "1.2", features = ["deepseek"], optional = true }
 serde_json = { version = "1", optional = true }
@@ -62,7 +63,8 @@ ssr = [
     "dep:tower-sessions-sqlx-store",
     "dep:uuid",
     "dep:time",
-    "dep:s3",
+    "dep:aws-config",
+    "dep:aws-sdk-s3",
     "dep:tempfile",
     "dep:tokio-util",
     "dep:futures-util",
