@@ -6,3 +6,5 @@ node_modules/
 flashy.db
 flashy.db-wal
 flashy.db-shm
+data/
+minio_data/

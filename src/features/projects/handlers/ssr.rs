@@ -80,6 +80,105 @@ pub async fn get_project_pdf(
 }
 
 #[cfg(feature = "ssr")]
+#[derive(serde::Deserialize)]
+pub struct SegmentPdfQuery {
+    ranges: String,
+    name: Option<String>,
+}
+
+#[cfg(feature = "ssr")]
+pub async fn get_project_segment_pdf(
+    axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
+    axum::extract::Path((project_id, file_id)): axum::extract::Path<(i64, i64)>,
+    axum::extract::Query(query): axum::extract::Query<SegmentPdfQuery>,
+    session: tower_sessions::Session,
+) -> Result<axum::response::Response, (axum::http::StatusCode, String)> {
+    use axum::body::Body;
+    use axum::http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
+    use axum::http::HeaderValue;
+    use axum::response::IntoResponse;
+    use sqlx::SqlitePool;
+
+    use crate::features::auth::utils::get_user_from_session;
+    let user = get_user_from_session(&session).await.ok_or((
+        axum::http::StatusCode::UNAUTHORIZED,
+        "Not authenticated".to_string(),
+    ))?;
+
+    let pool: &SqlitePool = &state.db_pool;
+    let row = sqlx::query!(
+        r#"
+        SELECT pf.s3_key as "s3_key!: String",
+               pf.s3_bucket as "s3_bucket!: String",
+               pf.original_filename as "original_filename!: String"
+        FROM project_files pf
+        INNER JOIN study_projects sp ON sp.id = pf.project_id
+        WHERE pf.id = ? AND pf.project_id = ? AND sp.user_id = ?
+        "#,
+        file_id,
+        project_id,
+        user.id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((
+        axum::http::StatusCode::NOT_FOUND,
+        "File not found".to_string(),
+    ))?;
+
+    let ranges = parse_segment_ranges(&query.ranges)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
+
+    let (temp_path, _pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
+        &state.minio_client,
+        &row.s3_bucket,
+        &row.s3_key,
+    )
+    .await
+    .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))?;
+
+    let pdf_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let path: &std::path::Path = temp_path.as_ref();
+        crate::features::projects::processing::build_segment_pdf_bytes(path, &ranges)
+    })
+    .await
+    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let filename = query
+        .name
+        .as_deref()
+        .map(crate::features::projects::processing::sanitize_filename)
+        .unwrap_or_else(|| build_segment_filename(&row.original_filename));
+    let pdf_len = pdf_bytes.len();
+    let body = Body::from(pdf_bytes);
+    let mut response = body.into_response();
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/pdf"));
+    headers.insert(
+        CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename)).map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid content disposition".to_string(),
+            )
+        })?,
+    );
+    headers.insert(
+        CONTENT_LENGTH,
+        HeaderValue::from_str(&pdf_len.to_string()).map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid content length".to_string(),
+            )
+        })?,
+    );
+
+    Ok(response)
+}
+
+#[cfg(feature = "ssr")]
 pub async fn upload_project_file(
     axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
     axum::extract::Path(project_id): axum::extract::Path<i64>,
@@ -181,7 +280,7 @@ pub async fn upload_project_file(
         }
 
         // Upload to S3 first
-        let sanitized_name = sanitize_filename(&file_name);
+        let sanitized_name = crate::features::projects::processing::sanitize_filename(&file_name);
         let key = format!(
             "{}/{}/{}-{}",
             state.object_key_prefix,
@@ -239,7 +338,13 @@ pub async fn upload_project_file(
         // Spawn background task for text extraction
         let pool_clone = state.db_pool.clone();
         tokio::spawn(async move {
-            if let Err(e) = process_file_async(file_id, temp_path_buf, pool_clone).await {
+            if let Err(e) = crate::features::projects::processing::process_file_async(
+                file_id,
+                temp_path_buf,
+                pool_clone,
+            )
+            .await
+            {
                 eprintln!("Error processing file {}: {}", file_id, e);
             }
         });
@@ -258,67 +363,53 @@ pub async fn upload_project_file(
 }
 
 #[cfg(feature = "ssr")]
-async fn process_file_async(
-    file_id: i64,
-    temp_path: std::path::PathBuf,
-    pool: sqlx::SqlitePool,
-) -> Result<(), String> {
-    use crate::features::projects::processing::extract_text_with_pdftotext;
-
-    // Update status to processing
-    sqlx::query("UPDATE project_files SET processing_status = 'processing' WHERE id = ?")
-        .bind(file_id)
-        .execute(&pool)
-        .await
-        .map_err(|e: sqlx::Error| e.to_string())?;
-
-    // Get file size for extraction
-    let file_size = tokio::fs::metadata(&temp_path)
-        .await
-        .map_err(|e| e.to_string())?
-        .len();
-
-    // Extract text
-    let result = match extract_text_with_pdftotext(&temp_path, file_size).await {
-        Ok(extracted_text) => {
-            sqlx::query("UPDATE project_files SET extracted_text = ?, processing_status = 'completed' WHERE id = ?")
-                .bind(extracted_text)
-                .bind(file_id)
-                .execute(&pool)
-                .await
-                .map_err(|e: sqlx::Error| e.to_string())
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            sqlx::query("UPDATE project_files SET processing_status = 'failed' WHERE id = ?")
-                .bind(file_id)
-                .execute(&pool)
-                .await
-                .map_err(|e: sqlx::Error| e.to_string())?;
-            Err(error_msg)
-        }
-    };
-
-    // Clean up the temporary file
-    let _ = tokio::fs::remove_file(&temp_path).await;
-
-    result.map(|_| ())
+fn build_segment_filename(original: &str) -> String {
+    let cleaned = crate::features::projects::processing::sanitize_filename(original);
+    match cleaned.strip_suffix(".pdf") {
+        Some(stem) => format!("{stem}-segment.pdf"),
+        None => format!("{cleaned}-segment.pdf"),
+    }
 }
 
 #[cfg(feature = "ssr")]
-fn sanitize_filename(filename: &str) -> String {
-    let mut cleaned: String = filename
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        .collect();
+fn parse_segment_ranges(
+    raw: &str,
+) -> Result<Vec<crate::features::projects::models::SegmentRange>, String> {
+    use crate::features::projects::models::SegmentRange;
 
-    if cleaned.is_empty() {
-        cleaned = "slides.pdf".to_string();
+    let mut ranges = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start_page = start
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| format!("Invalid range start: {start}"))?;
+            let end_page = end
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| format!("Invalid range end: {end}"))?;
+            ranges.push(SegmentRange {
+                start_page,
+                end_page,
+            });
+        } else {
+            let page = part
+                .parse::<i64>()
+                .map_err(|_| format!("Invalid page: {part}"))?;
+            ranges.push(SegmentRange {
+                start_page: page,
+                end_page: page,
+            });
+        }
     }
 
-    if !cleaned.to_lowercase().ends_with(".pdf") {
-        cleaned.push_str(".pdf");
+    if ranges.is_empty() {
+        return Err("No ranges provided".to_string());
     }
 
-    cleaned
+    Ok(ranges)
 }

@@ -11,6 +11,8 @@ use super::models::UserSession;
 use super::utils::{
     clear_session, get_user_from_session, hash_password, set_user_in_session, verify_password,
 };
+#[cfg(feature = "ssr")]
+use crate::validation::{validate_email, validate_password, validate_username};
 
 #[server(RegisterUser)]
 pub async fn register_user(
@@ -21,12 +23,17 @@ pub async fn register_user(
 ) -> Result<UserSession, ServerFnError> {
     use sqlx::SqlitePool;
 
-    if username.trim().len() < 3 {
-        return Err(ServerFnError::new("Username must be at least 3 characters"));
-    }
-    if password.len() < 8 {
-        return Err(ServerFnError::new("Password must be at least 8 characters"));
-    }
+    // Validate username
+    let username = validate_username(&username)?;
+
+    // Validate password
+    validate_password(&password)?;
+
+    // Validate email if provided
+    let email = match email {
+        Some(ref e) if !e.trim().is_empty() => Some(validate_email(e)?),
+        _ => None,
+    };
 
     let pool = expect_context::<SqlitePool>();
 
@@ -202,4 +209,66 @@ pub async fn get_user() -> Result<Option<UserSession>, ServerFnError> {
         .map_err(|_| ServerFnError::new("Authentication error"))?;
 
     Ok(get_user_from_session(&session).await)
+}
+
+#[server(ChangePassword)]
+pub async fn change_password(
+    current_password: String,
+    new_password: String,
+) -> Result<(), ServerFnError> {
+    use sqlx::SqlitePool;
+
+    // Require authentication
+    let session = extract::<Session>()
+        .await
+        .map_err(|_| ServerFnError::new("Authentication error"))?;
+
+    let user_session = get_user_from_session(&session)
+        .await
+        .ok_or_else(|| ServerFnError::new("Not authenticated"))?;
+
+    // Validate new password
+    validate_password(&new_password)?;
+
+    // Prevent setting the same password
+    if current_password == new_password {
+        return Err(ServerFnError::new(
+            "New password must be different from current password",
+        ));
+    }
+
+    let pool = expect_context::<SqlitePool>();
+
+    // Fetch current user with password hash
+    let user = sqlx::query_as::<_, User>(
+        "SELECT id, username, password_hash, email, is_admin FROM users WHERE id = ?",
+    )
+    .bind(user_session.id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("User not found"))?;
+
+    // Verify current password
+    let valid = verify_password(&current_password, &user.password_hash).unwrap_or(false);
+
+    if !valid {
+        return Err(ServerFnError::new("Current password is incorrect"));
+    }
+
+    // Hash new password
+    let new_password_hash =
+        hash_password(&new_password).map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Update password in database
+    sqlx::query!(
+        "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?",
+        new_password_hash,
+        user_session.id
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
 }

@@ -9,6 +9,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
+      - ./.env:/app/.env:ro
     environment:
       - DATABASE_URL=sqlite:/app/data/flashy.db
       - RUST_LOG=info
@@ -30,10 +31,12 @@ services:
       start_period: 5s
       retries: 3
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
 
   minio:
     image: minio/minio:latest
+    user: "${UID:-1000}:${GID:-1000}"
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -42,8 +45,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
-      - minio_data:/data
+      - ./minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
-
-volumes:
-  minio_data:

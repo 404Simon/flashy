@@ -14,7 +14,7 @@ async fn main() {
         features::{
             auth::utils::ensure_admin_user,
             flashcards::handlers::anki_export::download_deck_as_anki,
-            projects::handlers::{get_project_pdf, upload_project_file},
+            projects::handlers::{get_project_pdf, get_project_segment_pdf, upload_project_file},
             projects::storage::{build_minio_client, MinioSettings},
         },
     };
@@ -109,6 +109,10 @@ async fn main() {
         .route(
             "/api/projects/{project_id}/files/{file_id}/pdf",
             get(get_project_pdf),
+        )
+        .route(
+            "/api/projects/{project_id}/files/{file_id}/segment-pdf",
+            get(get_project_segment_pdf),
         )
         .route(
             "/api/decks/{deck_id}/download/anki",

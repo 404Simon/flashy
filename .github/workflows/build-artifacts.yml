@@ -18,9 +18,13 @@ jobs:
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: wasm32-unknown-unknown
 
-    - name: Add WASM target
-      run: rustup target add wasm32-unknown-unknown
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
 
     - name: Install Node.js (for tailwind)
       uses: actions/setup-node@v6
@@ -31,31 +35,17 @@ jobs:
       run: npm install
 
     - name: Install SQLx CLI
-      run: |
-        cargo install sqlx-cli --no-default-features --features sqlite
+      run: cargo install sqlx-cli --no-default-features --features sqlite --locked
+      env:
+        CARGO_TARGET_DIR: /tmp/sqlx-build
 
     - name: Setup database for SQLx compile-time verification
       run: |
         sqlx database create
         sqlx migrate run
 
-    - name: Cache cargo registry and target
-      uses: actions/cache@v5
-      with:
-        path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
-
     - name: Install cargo-leptos
-      run: |
-        curl --proto '=https' --tlsv1.3 -LsSf \
-          https://github.com/leptos-rs/cargo-leptos/releases/latest/download/cargo-leptos-installer.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      run: cargo install cargo-leptos --locked
 
     - name: Build release with cargo-leptos
       run: |
