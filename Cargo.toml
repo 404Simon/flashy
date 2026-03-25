@@ -32,7 +32,7 @@ aws-sdk-s3 = { version = "1.76", features = ["behavior-version-latest"], optiona
 tempfile = { version = "3", optional = true }
 llm = { version = "1.2", features = ["deepseek"], optional = true }
 serde_json = { version = "1", optional = true }
-gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+gloo-timers = { version = "0.4", features = ["futures"], optional = true }
 web-sys = { version = "0.3", features = ["Navigator", "Clipboard", "Window"], optional = true }
 js-sys = { version = "0.3", optional = true }
 pulldown-cmark = "0.13"
