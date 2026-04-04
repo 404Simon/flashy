@@ -9,6 +9,9 @@ pub mod features;
 pub mod pages;
 pub mod validation;
 
+#[cfg(feature = "ssr")]
+pub mod session_store;
+
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {

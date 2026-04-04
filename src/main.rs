@@ -6,6 +6,7 @@ async fn main() {
     use axum::extract::DefaultBodyLimit;
     use axum::routing::{get, post};
     use axum::Router;
+    use flashy::session_store::SqliteStore;
     use flashy::{
         app::*,
         app_state::AppState,
@@ -22,7 +23,6 @@ async fn main() {
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use time::Duration;
     use tower_sessions::{Expiry, SessionManagerLayer};
-    use tower_sessions_sqlx_store::SqliteStore;
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     if let Err(e) = dotenvy::dotenv() {

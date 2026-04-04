@@ -17,18 +17,21 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util", "proces
 tokio-util = { version = "0.7", optional = true }
 futures-util = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2.106", optional = true }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"], default-features = false, optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "time"], default-features = false, optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 dotenvy = { version = "0.15", optional = true }
 serde = { version = "1", features = ["derive"] }
 bcrypt = { version = "0.19", optional = true }
-tower-sessions = { version = "0.14", optional = true }
-tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], default-features = false, optional = true }
+tower-sessions = { version = "0.15", optional = true }
+tower-sessions-core = { version = "0.15", features = ["deletion-task"], optional = true }
+async-trait = { version = "0.1", optional = true }
+rmp-serde = { version = "1.1", optional = true }
+thiserror = { version = "1", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 time = { version = "0.3", features = ["formatting", "parsing"], optional = true }
 aws-config = { version = "1.5", optional = true }
-aws-sdk-s3 = { version = "1.76", features = ["behavior-version-latest"], optional = true }
+aws-sdk-s3 = { version = "1.128", features = ["behavior-version-latest"], optional = true }
 tempfile = { version = "3", optional = true }
 llm = { version = "1.2", features = ["deepseek"], optional = true }
 serde_json = { version = "1", optional = true }
@@ -60,7 +63,10 @@ ssr = [
     "dep:dotenvy",
     "dep:bcrypt",
     "dep:tower-sessions",
-    "dep:tower-sessions-sqlx-store",
+    "dep:tower-sessions-core",
+    "dep:async-trait",
+    "dep:rmp-serde",
+    "dep:thiserror",
     "dep:uuid",
     "dep:time",
     "dep:aws-config",
