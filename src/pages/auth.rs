@@ -20,6 +20,17 @@ pub fn LoginPage() -> impl IntoView {
         }
     });
 
+    let error = move || {
+        login_action
+            .value()
+            .get()
+            .and_then(|res| res.err())
+            .map(|e| match e {
+                ServerFnError::ServerError(msg) => msg,
+                other => other.to_string(),
+            })
+    };
+
     view! {
         <section class="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-8 px-6 py-16">
             <div class="space-y-3">
@@ -30,6 +41,11 @@ pub fn LoginPage() -> impl IntoView {
             <div class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
                 <ActionForm action=login_action>
                     <div class="space-y-4">
+                        <Show when=move || error().is_some()>
+                            <p class="rounded-xl border border-red-800 bg-red-900/50 px-4 py-2 text-sm text-red-300">
+                                {error().unwrap_or_default()}
+                            </p>
+                        </Show>
                         <label class="flex flex-col gap-2 text-sm text-slate-300">
                             "Username"
                             <input class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100" type="text" name="username" required/>
