@@ -34,16 +34,13 @@ jobs:
     - name: Install cargo-binstall
       uses: cargo-bins/cargo-binstall@main
 
-    - name: Install SQLx CLI
-      run: cargo binstall sqlx-cli --no-default-features --features sqlite --locked --yes
+    - name: Install SQLx CLI and cargo-leptos
+      run: cargo binstall sqlx-cli cargo-leptos --no-confirm --locked
 
     - name: Setup database for SQLx compile-time verification
       run: |
         sqlx database create
         sqlx migrate run
-
-    - name: Install cargo-leptos
-      run: cargo binstall cargo-leptos --locked --yes
 
     - name: Install Node.js dependencies
       run: npm ci
