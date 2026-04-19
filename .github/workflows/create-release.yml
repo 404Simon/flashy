@@ -3,25 +3,17 @@ name: Create Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Release Version (e.g. v0.2.0)'
+      bump:
+        description: "Version bump type"
         required: true
-        type: string
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
 
 jobs:
-  validate-version:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate version format
-        run: |
-          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Version must be in format vX.Y.Z (e.g., v0.2.0)"
-            exit 1
-          fi
-          echo "Version format is valid: ${{ inputs.version }}"
-
   bump-and-tag:
-    needs: [validate-version]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -29,13 +21,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_PAT }}
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+          fetch-depth: 0
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
@@ -44,15 +30,30 @@ jobs:
         run: cargo binstall cargo-edit --no-confirm --locked
 
       - name: Bump version in Cargo.toml
+        id: bump_version
+        env:
+          BUMP_TYPE: ${{ inputs.bump }}
         run: |
-          CLEAN_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
-          echo "Updating version to $CLEAN_VERSION"
-          cargo set-version "$CLEAN_VERSION"
+          CURRENT=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+
+          case "$BUMP_TYPE" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Unsupported bump type: $BUMP_TYPE"; exit 1 ;;
+          esac
+
+          NEW_VERSION="${major}.${minor}.${patch}"
+
+          cargo set-version "$NEW_VERSION"
+
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Verify version was updated
         run: |
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
-          EXPECTED_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
+          EXPECTED_VERSION="${{ steps.bump_version.outputs.new_version }}"
 
           if [ "$CARGO_VERSION" != "$EXPECTED_VERSION" ]; then
             echo "Error: Version mismatch. Expected $EXPECTED_VERSION but got $CARGO_VERSION"
@@ -62,35 +63,36 @@ jobs:
           echo "Version successfully updated to $CARGO_VERSION"
 
       - name: Commit and tag
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new_version }}
         run: |
-          CLEAN_VERSION=$(echo "${{ inputs.version }}" | sed 's/^v//')
-
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add Cargo.toml Cargo.lock
-          git commit -m "chore: release v$CLEAN_VERSION [no ci]"
+          git commit -m "chore: release v${NEW_VERSION} [no ci]"
 
-          git tag "${{ inputs.version }}"
+          git tag "v${NEW_VERSION}"
 
           git push
-          git push origin "${{ inputs.version }}"
+          git push origin "v${NEW_VERSION}"
 
           echo "## Version Bump Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: $(git rev-parse HEAD)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new_version }}
         run: |
-          gh release create "${{ inputs.version }}" \
+          gh release create "v${NEW_VERSION}" \
             --draft=false \
             --latest \
             --generate-notes \
-            --title "Release ${{ inputs.version }}" \
+            --title "Release v${NEW_VERSION}" \
             --notes "This release was automatically created by GitHub Actions.
 
           ## Installation
@@ -106,8 +108,8 @@ jobs:
           ### Docker
 
           \`\`\`bash
-          docker pull ghcr.io/${{ github.repository }}:${{ inputs.version }}
-          docker run -p 8080:8080 -v ./data:/app/data ghcr.io/${{ github.repository }}:${{ inputs.version }}
+          docker pull ghcr.io/${{ github.repository }}:v${NEW_VERSION}
+          docker run -p 8080:8080 -v ./data:/app/data ghcr.io/${{ github.repository }}:v${NEW_VERSION}
           \`\`\`
 
           ### Binary
