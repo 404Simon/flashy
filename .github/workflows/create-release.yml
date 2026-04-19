@@ -72,27 +72,27 @@ jobs:
           git add Cargo.toml Cargo.lock
           git commit -m "chore: release v${NEW_VERSION} [no ci]"
 
-          git tag "v${NEW_VERSION}"
+          git tag "${NEW_VERSION}"
 
           git push
-          git push origin "v${NEW_VERSION}"
+          git push origin "${NEW_VERSION}"
 
           echo "## Version Bump Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: $(git rev-parse HEAD)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: ${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new_version }}
         run: |
-          gh release create "v${NEW_VERSION}" \
+          gh release create "${NEW_VERSION}" \
             --draft=false \
             --latest \
             --generate-notes \
-            --title "Release v${NEW_VERSION}" \
+            --title "Release ${NEW_VERSION}" \
             --notes "This release was automatically created by GitHub Actions.
 
           ## Installation
@@ -108,8 +108,8 @@ jobs:
           ### Docker
 
           \`\`\`bash
-          docker pull ghcr.io/${{ github.repository }}:v${NEW_VERSION}
-          docker run -p 8080:8080 -v ./data:/app/data ghcr.io/${{ github.repository }}:v${NEW_VERSION}
+          docker pull ghcr.io/${{ github.repository }}:${NEW_VERSION}
+          docker run -p 8080:8080 -v ./data:/app/data ghcr.io/${{ github.repository }}:${NEW_VERSION}
           \`\`\`
 
           ### Binary
