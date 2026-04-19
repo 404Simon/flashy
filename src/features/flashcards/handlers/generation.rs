@@ -162,12 +162,29 @@ async fn call_llm_for_flashcards(prompt: &str) -> Result<Vec<GeneratedCard>, Ser
         builder::{LLMBackend, LLMBuilder},
         chat::{ChatMessage, StructuredOutputFormat},
     };
+    use std::str::FromStr;
 
     println!("🤖 Starting LLM call for flashcard generation");
 
-    // Get API key from env
-    let api_key = std::env::var("DEEPSEEK_API_KEY")
-        .map_err(|_| ServerFnError::new("DEEPSEEK_API_KEY not set in environment"))?;
+    let config = crate::config::Config::global();
+
+    let api_key = config
+        .llm_api_key
+        .clone()
+        .ok_or_else(|| ServerFnError::new("LLM_API_KEY not set in environment"))?;
+
+    let backend = LLMBackend::from_str(&config.llm_provider).map_err(|e| {
+        ServerFnError::new(format!(
+            "Invalid LLM_PROVIDER '{}': {}",
+            config.llm_provider, e
+        ))
+    })?;
+
+    let model = if config.llm_model.is_empty() {
+        return Err(ServerFnError::new("LLM_MODEL not set in environment"));
+    } else {
+        &config.llm_model
+    };
 
     // Define JSON schema for flashcard array
     let schema = r#"
@@ -204,9 +221,9 @@ async fn call_llm_for_flashcards(prompt: &str) -> Result<Vec<GeneratedCard>, Ser
     println!("🤖 Building LLM client with structured output schema");
 
     let llm = LLMBuilder::new()
-        .backend(LLMBackend::DeepSeek)
+        .backend(backend)
         .api_key(api_key)
-        .model("deepseek-chat")
+        .model(model)
         .max_tokens(4096)
         .temperature(0.7)
         .schema(schema)
@@ -215,14 +232,14 @@ async fn call_llm_for_flashcards(prompt: &str) -> Result<Vec<GeneratedCard>, Ser
 
     let messages = vec![ChatMessage::user().content(prompt).build()];
 
-    println!("🤖 Sending request to DeepSeek API...");
+    println!("🤖 Sending request to {} API...", config.llm_provider);
 
     let response = llm
         .chat(&messages)
         .await
         .map_err(|e| ServerFnError::new(format!("LLM API error: {}", e)))?;
 
-    println!("🤖 Received response from DeepSeek API");
+    println!("🤖 Received response from {} API", config.llm_provider);
 
     let content = response
         .text()

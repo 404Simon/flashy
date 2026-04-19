@@ -30,9 +30,29 @@ cp .env.example .env
 cargo leptos watch
 ```
 
+## LLM Configuration
+
+Flashcard generation is provider-agnostic. Set these environment variables:
+
+| Variable | Description |
+|---|---|
+| `LLM_PROVIDER` | Backend name (required) |
+| `LLM_API_KEY` | API key for the provider (required) |
+| `LLM_MODEL` | Model identifier (required) |
+
+**Supported providers:** `openai`, `anthropic`, `deepseek`, `ollama`, `xai`, `google`, `groq`, `mistral`, `openrouter`, `cohere`, `phind`, `huggingface`, `aws_bedrock`, `azure_openai`
+
+### Example: DeepSeek
+
+```env
+LLM_PROVIDER=deepseek
+LLM_API_KEY=sk-your-key
+LLM_MODEL=deepseek-chat
+```
+
 ## Stack
 
 - Leptos + Axum
 - SQLite
-- llm crate using DeepSeek
+- llm crate (provider-agnostic)
 - Tailwind

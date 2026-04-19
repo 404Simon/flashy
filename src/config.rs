@@ -17,6 +17,9 @@ pub struct Config {
     pub max_pdf_bytes: u64,
     /// Maximum number of words to send to AI for flashcard generation
     pub max_context_words: usize,
+    pub llm_provider: String,
+    pub llm_api_key: Option<String>,
+    pub llm_model: String,
 }
 
 #[cfg(feature = "ssr")]
@@ -26,6 +29,9 @@ impl Default for Config {
             max_upload_bytes: DEFAULT_MAX_UPLOAD_MB * 1024 * 1024,
             max_pdf_bytes: DEFAULT_MAX_PDF_MB * 1024 * 1024,
             max_context_words: DEFAULT_MAX_CONTEXT_WORDS,
+            llm_provider: String::new(),
+            llm_api_key: None,
+            llm_model: String::new(),
         }
     }
 }
@@ -49,10 +55,17 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_MAX_CONTEXT_WORDS);
 
+        let llm_provider = std::env::var("LLM_PROVIDER").unwrap_or_default();
+        let llm_api_key = std::env::var("LLM_API_KEY").ok();
+        let llm_model = std::env::var("LLM_MODEL").unwrap_or_default();
+
         Self {
             max_upload_bytes: max_upload_mb * 1024 * 1024,
             max_pdf_bytes: max_pdf_mb * 1024 * 1024,
             max_context_words,
+            llm_provider,
+            llm_api_key,
+            llm_model,
         }
     }
 
