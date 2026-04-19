@@ -79,3 +79,5 @@ jobs:
             CARGO_INCREMENTAL=0
             CARGO_NET_RETRY=10
             RUST_BACKTRACE=1
+            CARGO_PROFILE_RELEASE_LTO=thin
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16

@@ -46,7 +46,7 @@ jobs:
           echo "All artifacts uploaded successfully!" >> $GITHUB_STEP_SUMMARY
 
   build-docker:
-    needs: [upload-release-assets]
+    needs: [build-artifacts]
     permissions:
       contents: read
       packages: write
