@@ -37,8 +37,11 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Install cargo-edit
-        run: cargo install cargo-edit --locked
+        run: cargo binstall cargo-edit --locked
 
       - name: Bump version in Cargo.toml
         run: |
