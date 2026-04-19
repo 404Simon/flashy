@@ -41,7 +41,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-edit
-        run: cargo binstall cargo-edit --locked
+        run: cargo binstall cargo-edit --no-confirm --locked
 
       - name: Bump version in Cargo.toml
         run: |
