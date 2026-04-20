@@ -55,7 +55,7 @@ pub fn markdown_to_html(markdown: &str) -> String {
     html::push_html(&mut html_output, parser);
 
     // Step 3: Restore LaTeX math expressions
-    math_placeholders.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    math_placeholders.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
     for (placeholder, original) in math_placeholders {
         html_output = html_output.replace(&placeholder, &original);
     }
