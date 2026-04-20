@@ -17,6 +17,7 @@ use crate::features::{
         get_segment_stats, list_project_files, SaveSegmentPdf,
     },
     projects::models::{PdfTocEntry, SegmentRange, SegmentStats},
+    summaries::StartSummaryGeneration,
 };
 
 #[component]
@@ -148,12 +149,18 @@ pub fn ProjectDetailPage() -> impl IntoView {
                                 {project.description.as_ref().map(|desc| view! {
                                     <p class="text-slate-300">{desc.clone()}</p>
                                 })}
-                                <div class="pt-2">
+                                <div class="pt-2 flex flex-wrap gap-3">
                                     <a
                                         class="inline-flex items-center rounded-full border border-slate-700 px-5 py-2 text-sm hover:border-slate-400"
                                         href=format!("/projects/{}/decks", project.id)
                                     >
                                         "View Flashcard Decks →"
+                                    </a>
+                                    <a
+                                        class="inline-flex items-center rounded-full border border-violet-700/60 px-5 py-2 text-sm text-violet-200 hover:border-violet-400"
+                                        href=format!("/projects/{}/summaries", project.id)
+                                    >
+                                        "View Summaries →"
                                     </a>
                                 </div>
                             </div>
@@ -490,6 +497,8 @@ fn SegmentModal(
     let save_modal_open = RwSignal::new(false);
     let save_name = RwSignal::new(String::new());
     let save_action = ServerAction::<SaveSegmentPdf>::new();
+    let summary_title = RwSignal::new(String::new());
+    let summary_action = ServerAction::<StartSummaryGeneration>::new();
     let has_segment_selection =
         Signal::derive(move || !use_entire_file.get() && !selected_ranges.get().is_empty());
     let save_enabled = Signal::derive(move || {
@@ -627,6 +636,12 @@ fn SegmentModal(
     let can_generate = Signal::derive(move || {
         let has_selection = use_entire_file.get() || !selected_ranges.get().is_empty();
         selected_deck_id.get().is_some() && has_selection && !action.pending().get()
+    });
+
+    let can_generate_summary = Signal::derive(move || {
+        let has_selection = use_entire_file.get() || !selected_ranges.get().is_empty();
+        let title = summary_title.get();
+        has_selection && !title.trim().is_empty() && !summary_action.pending().get()
     });
 
     Effect::new(move |_| {
@@ -1013,6 +1028,84 @@ fn SegmentModal(
                                 disabled=move || !can_generate.get()
                             >
                                 "Generate ✨"
+                            </button>
+                        </div>
+
+                        <div class="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5 space-y-4">
+                            <div>
+                                <p class="text-sm font-semibold text-violet-200">"Generate study summary"</p>
+                                <p class="text-xs text-slate-500">
+                                    "Create a concise, in-depth explanatory summary."
+                                </p>
+                            </div>
+
+                            <div class="flex flex-col gap-2 text-sm text-slate-300">
+                                <label>"Summary title"</label>
+                                <input
+                                    class="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-100"
+                                    type="text"
+                                    placeholder="e.g., Graph Theory Summary"
+                                    prop:value=move || summary_title.get()
+                                    on:input=move |ev| summary_title.set(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <Show when=move || summary_action.pending().get()>
+                                <div class="rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
+                                    "Starting summary generation..."
+                                </div>
+                            </Show>
+
+                            <Show when=move || {
+                                summary_action.value().get().as_ref().and_then(|r| r.as_ref().err()).is_some()
+                            }>
+                                {move || summary_action.value().get().as_ref().and_then(|r| r.as_ref().err()).map(|err| view! {
+                                    <div class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+                                        {err.to_string()}
+                                    </div>
+                                })}
+                            </Show>
+
+                            <Show when=move || {
+                                summary_action.value().get().as_ref().and_then(|r| r.as_ref().ok()).is_some()
+                            }>
+                                {move || summary_action.value().get().as_ref().and_then(|r| r.as_ref().ok()).map(|_summary| view! {
+                                    <div class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
+                                        "Summary generation started! Check your project's summaries page."
+                                    </div>
+                                })}
+                            </Show>
+
+                            <button
+                                class="w-full rounded-full bg-violet-600 px-6 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                                type="button"
+                                on:click=move |_| {
+                                    let title = summary_title.get();
+                                    if title.trim().is_empty() {
+                                        return;
+                                    }
+                                    let use_full = use_entire_file.get();
+                                    let ranges = if use_full {
+                                        None
+                                    } else {
+                                        let ranges = selected_ranges.get();
+                                        if ranges.is_empty() {
+                                            return;
+                                        }
+                                        Some(ranges)
+                                    };
+                                    let label = segment_label.get();
+                                    summary_action.dispatch(StartSummaryGeneration {
+                                        project_id,
+                                        file_id: file.id,
+                                        title,
+                                        segment_label: if label.trim().is_empty() { None } else { Some(label) },
+                                        segment_ranges: ranges,
+                                    });
+                                }
+                                disabled=move || !can_generate_summary.get()
+                            >
+                                "Generate Summary 📝"
                             </button>
                         </div>
                     </div>

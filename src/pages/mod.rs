@@ -5,6 +5,7 @@ pub mod home;
 pub mod invites;
 pub mod projects;
 pub mod settings;
+pub mod summaries;
 
 pub use admin::{AdminInvitesPage, AdminUsersPage};
 pub use auth::{LoginPage, RegisterPage};
@@ -13,3 +14,4 @@ pub use home::HomePage;
 pub use invites::InvitePage;
 pub use projects::{ProjectDetailPage, ProjectsPage};
 pub use settings::SettingsPage;
+pub use summaries::{SummariesPage, SummaryViewerPage};

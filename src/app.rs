@@ -29,6 +29,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                     };"
                 </script>
                 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script"></script>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
             </head>
             <body class="min-h-screen bg-slate-950 text-slate-100 bg-grid">
                 <App/>
@@ -76,8 +77,10 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("projects") view=ProjectsPage/>
                     <Route path=path!("/projects/:id") view=ProjectDetailPage/>
                     <Route path=path!("/projects/:id/decks") view=DecksPage/>
+                    <Route path=path!("/projects/:id/summaries") view=SummariesPage/>
                     <Route path=path!("/decks/:deck_id") view=DeckDetailPage/>
                     <Route path=path!("/decks/:deck_id/study") view=DeckViewerPage/>
+                    <Route path=path!("/summaries/:summary_id") view=SummaryViewerPage/>
                     <Route path=path!("/admin/invites") view=AdminInvitesPage/>
                     <Route path=path!("/admin/users") view=AdminUsersPage/>
                 </Routes>

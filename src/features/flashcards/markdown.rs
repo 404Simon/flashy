@@ -1,6 +1,5 @@
 use pulldown_cmark::{html, Options, Parser};
 use regex::Regex;
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 fn get_display_math_regex() -> &'static Regex {
@@ -24,14 +23,14 @@ fn get_inline_math_regex() -> &'static Regex {
 /// LaTeX rendering engines in the final display environment.
 pub fn markdown_to_html(markdown: &str) -> String {
     // Step 1: Extract and protect LaTeX math expressions
-    let mut math_map = HashMap::new();
+    let mut math_placeholders: Vec<(String, String)> = Vec::new();
     let mut counter = 0;
 
     // Protect display math \[ ... \] first (do this before inline to avoid conflicts)
     let display_math_re = get_display_math_regex();
     let protected_text = display_math_re.replace_all(markdown, |caps: &regex::Captures| {
-        let placeholder = format!("DISPLAYMATH{}", counter);
-        math_map.insert(placeholder.clone(), caps[0].to_string());
+        let placeholder = format!("@@DISPLAYMATH{:06}@@", counter);
+        math_placeholders.push((placeholder.clone(), caps[0].to_string()));
         counter += 1;
         placeholder
     });
@@ -39,8 +38,8 @@ pub fn markdown_to_html(markdown: &str) -> String {
     // Protect inline math \( ... \)
     let inline_math_re = get_inline_math_regex();
     let protected_text = inline_math_re.replace_all(&protected_text, |caps: &regex::Captures| {
-        let placeholder = format!("INLINEMATH{}", counter);
-        math_map.insert(placeholder.clone(), caps[0].to_string());
+        let placeholder = format!("@@INLINEMATH{:06}@@", counter);
+        math_placeholders.push((placeholder.clone(), caps[0].to_string()));
         counter += 1;
         placeholder
     });
@@ -56,7 +55,8 @@ pub fn markdown_to_html(markdown: &str) -> String {
     html::push_html(&mut html_output, parser);
 
     // Step 3: Restore LaTeX math expressions
-    for (placeholder, original) in math_map {
+    math_placeholders.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    for (placeholder, original) in math_placeholders {
         html_output = html_output.replace(&placeholder, &original);
     }
 
@@ -111,5 +111,15 @@ mod tests {
         let input = "| A | B |\n|---|---|\n| 1 | 2 |";
         let output = markdown_to_html(input);
         assert!(output.contains("<table>"));
+    }
+
+    #[test]
+    fn test_placeholder_overlap_regression() {
+        let input = r"\(x_0\) \(x_1\) \(x_2\) \(x_3\) \(x_4\) \(x_5\) \(x_6\) \(x_7\) \(x_8\) \(x_9\) \(x_{10}\) \(x_{11}\)";
+        let output = markdown_to_html(input);
+        assert!(output.contains(r"\(x_0\)"));
+        assert!(output.contains(r"\(x_9\)"));
+        assert!(output.contains(r"\(x_{10}\)"));
+        assert!(output.contains(r"\(x_{11}\)"));
     }
 }
