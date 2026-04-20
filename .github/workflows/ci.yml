@@ -29,14 +29,21 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
-      - name: Install tools
-        run: cargo binstall sqlx-cli cargo-leptos --no-confirm --locked
+      - name: Ensure cargo bin on PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install CI tools
+        run: cargo binstall sqlx-cli cargo-leptos cargo-audit --no-confirm --locked --force
+
+      - name: Verify installed tools
+        run: |
+          which cargo-leptos
+          which cargo-audit
+          cargo leptos --version
+          cargo audit --version
 
       - name: Check formatting
         run: cargo fmt --all -- --check
-
-      - name: Install cargo-audit
-        run: cargo binstall cargo-audit --no-confirm --locked
 
       - name: Run security audit
         run: cargo audit

@@ -34,8 +34,16 @@ jobs:
     - name: Install cargo-binstall
       uses: cargo-bins/cargo-binstall@main
 
+    - name: Ensure cargo bin on PATH
+      run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
     - name: Install SQLx CLI and cargo-leptos
-      run: cargo binstall sqlx-cli cargo-leptos --no-confirm --locked
+      run: cargo binstall sqlx-cli cargo-leptos --no-confirm --locked --force
+
+    - name: Verify installed tools
+      run: |
+        which cargo-leptos
+        cargo leptos --version
 
     - name: Setup database for SQLx compile-time verification
       run: |
