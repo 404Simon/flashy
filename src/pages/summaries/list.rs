@@ -129,7 +129,9 @@ fn SummaryCard(
     let summary_id = summary.id;
     let status_class = match summary.status.as_str() {
         "pending" | "processing" => "border-blue-500/40 bg-blue-500/5",
-        "completed" => "border-slate-800 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/70",
+        "completed" => {
+            "border-slate-800 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/70"
+        }
         "failed" => "border-rose-500/40 bg-rose-500/5",
         _ => "border-slate-800 bg-slate-900/50",
     };

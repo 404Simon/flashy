@@ -15,12 +15,8 @@ pub fn SummaryViewerPage() -> impl IntoView {
     let user = Signal::derive(move || user_resource.get().and_then(|r| r.ok()).flatten());
 
     let params = use_params_map();
-    let summary_id = move || {
-        params.with(|p| {
-            p.get("summary_id")
-                .and_then(|id| id.parse::<i64>().ok())
-        })
-    };
+    let summary_id =
+        move || params.with(|p| p.get("summary_id").and_then(|id| id.parse::<i64>().ok()));
 
     let summary_resource = LocalResource::new(move || {
         let id = summary_id();
@@ -95,17 +91,15 @@ pub fn SummaryViewerPage() -> impl IntoView {
         });
     };
 
-    let file_name_resource = LocalResource::new(move || {
-        async move {
-            if let Some(Ok(summary)) = summary_resource.get() {
-                if let Some(file_id) = summary.file_id {
-                    get_file_name(file_id).await.ok()
-                } else {
-                    None
-                }
+    let file_name_resource = LocalResource::new(move || async move {
+        if let Some(Ok(summary)) = summary_resource.get() {
+            if let Some(file_id) = summary.file_id {
+                get_file_name(file_id).await.ok()
             } else {
                 None
             }
+        } else {
+            None
         }
     });
 

@@ -183,8 +183,13 @@ pub async fn start_summary_generation(
     let app_state_clone = app_state.clone();
     let segment_ranges_for_job = segment_ranges_json.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            process_summary_generation(summary_id, pool_clone, app_state_clone, segment_ranges_for_job).await
+        if let Err(e) = process_summary_generation(
+            summary_id,
+            pool_clone,
+            app_state_clone,
+            segment_ranges_for_job,
+        )
+        .await
         {
             eprintln!("Error processing summary generation {}: {}", summary_id, e);
         }
@@ -240,14 +245,13 @@ async fn process_summary_generation(
             serde_json::from_str(&ranges_json)?;
         let s3_bucket: String = row.try_get("s3_bucket")?;
         let s3_key: String = row.try_get("s3_key")?;
-        let (temp_path, pdf_size) =
-            crate::features::projects::processing::download_pdf_to_temp(
-                &app_state.minio_client,
-                &s3_bucket,
-                &s3_key,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+        let (temp_path, pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
+            &app_state.minio_client,
+            &s3_bucket,
+            &s3_key,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         crate::features::projects::processing::extract_text_for_ranges_with_pdftotext(
             temp_path.as_ref(),
@@ -327,7 +331,10 @@ async fn call_llm_for_summary(prompt: &str) -> Result<GeneratedSummary, ServerFn
         .ok_or_else(|| ServerFnError::new("LLM_API_KEY not set"))?;
 
     let backend = LLMBackend::from_str(&config.llm_provider).map_err(|e| {
-        ServerFnError::new(format!("Invalid LLM_PROVIDER '{}': {}", config.llm_provider, e))
+        ServerFnError::new(format!(
+            "Invalid LLM_PROVIDER '{}': {}",
+            config.llm_provider, e
+        ))
     })?;
 
     let model = if config.llm_model.is_empty() {
@@ -396,7 +403,10 @@ async fn call_llm_for_summary(prompt: &str) -> Result<GeneratedSummary, ServerFn
     };
 
     let generated: GeneratedSummary = serde_json::from_str(json_content).map_err(|e| {
-        ServerFnError::new(format!("Failed to parse LLM response: {}. Response: {}", e, json_content))
+        ServerFnError::new(format!(
+            "Failed to parse LLM response: {}. Response: {}",
+            e, json_content
+        ))
     })?;
 
     if generated.content_markdown.trim().is_empty() {
