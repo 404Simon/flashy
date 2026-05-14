@@ -13,9 +13,12 @@
 # Blocked by AWS SDK dependency chain through llm crate (requires rustls 0.21.x)
 # Limited impact: requires compromised CA to exploit
 # Tracking upstream fix in aws-smithy-runtime
+# RUSTSEC-2026-0104: Reachable panic in certificate revocation list parsing
+# Same root cause as RUSTSEC-2026-0098 and RUSTSEC-2026-0099
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2024-0436",
     "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099"
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104"
 ]
