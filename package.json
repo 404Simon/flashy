@@ -2,6 +2,7 @@
   "name": "flashy",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.1.2",
   "devDependencies": {
     "tailwindcss": "^4.1.18"
   }

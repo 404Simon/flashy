@@ -1,53 +1,57 @@
 # =============================================================================
 # Stage 1: Tool Cache - Build/install cargo tools once and cache them
 # =============================================================================
-FROM rustlang/rust:nightly-alpine AS tool-cache
+FROM rustlang/rust:nightly-slim AS tool-cache
 
-RUN apk add --no-cache libc-dev openssl-dev sqlite-dev perl make
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  curl ca-certificates pkg-config libssl-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Install cargo tools in a dedicated stage for better caching
-RUN cargo install sqlx-cli --no-default-features --features sqlite --locked
-RUN cargo install cargo-leptos --locked
+RUN curl -L --proto '=https' --tlsv1.2 -sSf \
+  https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+  | bash
+
+# Install cargo-leptos from pre-built binaries
+RUN cargo binstall cargo-leptos --no-confirm --locked
+RUN cargo install sqlx-cli --no-default-features --features sqlite,rustls --locked
 
 # =============================================================================
 # Stage 2: Builder - Build the Leptos SSR application
 # =============================================================================
-FROM rustlang/rust:nightly-alpine AS builder
+FROM rustlang/rust:nightly-slim AS builder
 
-# Install build dependencies
-RUN apk update && \
-  apk add --no-cache \
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends curl ca-certificates && \
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+  apt-get install -y --no-install-recommends \
   bash \
-  curl \
-  npm \
-  libc-dev \
+  nodejs \
+  build-essential \
   binaryen \
-  openssl-dev \
-  openssl-libs-static \
-  pkgconfig \
-  sqlite \
-  sqlite-dev \
-  musl-dev
+  pkg-config \
+  libssl-dev \
+  libsqlite3-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy pre-built tools from cache stage
 COPY --from=tool-cache /usr/local/cargo/bin/sqlx /usr/local/cargo/bin/sqlx
 COPY --from=tool-cache /usr/local/cargo/bin/cargo-sqlx /usr/local/cargo/bin/cargo-sqlx
 COPY --from=tool-cache /usr/local/cargo/bin/cargo-leptos /usr/local/cargo/bin/cargo-leptos
 
-# Add WASM target for client-side hydration
 RUN rustup target add wasm32-unknown-unknown
 
-# Set working directory
 WORKDIR /work
 
-# Copy dependency manifests first and create dummy src for dependency caching
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable pnpm && pnpm install --frozen-lockfile
+
+# create dummy src for dependency caching
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src && \
   echo "fn main() {}" > src/main.rs && \
   echo "pub fn dummy() {}" > src/lib.rs
 RUN cargo build --release --features ssr && rm -rf src target/release/deps/flashy*
 
-# Now copy real source code
+# now copy real source code
 COPY src ./src
 COPY style ./style
 COPY public ./public
@@ -69,28 +73,15 @@ ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 RUN cargo leptos build --release -vv
 
 # =============================================================================
-# Stage 3: Runtime Dependencies - Build minimal sqlx for runtime
-# =============================================================================
-FROM rustlang/rust:nightly-alpine AS runtime-tools
-
-RUN apk add --no-cache libc-dev openssl-dev sqlite-dev musl-dev
-
-# Build sqlx statically for distroless
-RUN cargo install sqlx-cli --no-default-features --features sqlite --locked \
-  --target x86_64-unknown-linux-musl || \
-  cargo install sqlx-cli --no-default-features --features sqlite --locked
-
-# =============================================================================
-# Stage 4: Runner - Debian slim with runtime dependencies
+# Stage 3: Runner - Minimal Debian slim image with runtime dependencies
 # =============================================================================
 FROM debian:13-slim
 
-# Install runtime dependencies
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
-    ca-certificates \
-    poppler-utils \
-    wget \
+  ca-certificates \
+  poppler-utils \
+  wget \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -101,7 +92,7 @@ COPY --from=builder --chmod=644 /work/Cargo.toml /app/Cargo.toml
 COPY --from=builder /work/target/site /app/site
 COPY --from=builder /work/migrations /app/migrations
 
-COPY --from=runtime-tools --chmod=755 /usr/local/cargo/bin/sqlx /app/sqlx
+COPY --from=tool-cache --chmod=755 /usr/local/cargo/bin/sqlx /app/sqlx
 
 COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 

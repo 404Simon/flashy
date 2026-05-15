@@ -15,7 +15,7 @@
 - `cargo leptos build` — build server + WASM + assets for local verification.
 - `cargo leptos build --release` — production build (outputs to `target/`).
 - `cargo leptos end-to-end` — run Playwright tests in `end2end/`.
-- `npm install` — install Tailwind tooling for CSS builds.
+- `pnpm install` — install Tailwind tooling for CSS builds.
 
 ## Coding Style & Naming Conventions
 - Rust: follow `rustfmt` defaults; use `snake_case` for functions/modules and `CamelCase` for types.

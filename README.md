@@ -16,7 +16,7 @@ AI-powered flashcard generator for study materials. Upload PDFs, generate flashc
 ```bash
 cargo install cargo-leptos --locked
 rustup target add wasm32-unknown-unknown
-npm install
+pnpm install
 ```
 
 2. Configure environment:
