@@ -7,7 +7,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@11.1.2",
+  "packageManager": "pnpm@11.2.2",
   "devDependencies": {
     "@playwright/test": "^1.44.1",
     "@types/node": "^24.0.0",
