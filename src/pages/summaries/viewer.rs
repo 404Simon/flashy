@@ -151,6 +151,13 @@ pub fn SummaryViewerPage() -> impl IntoView {
 
                                 <Show when=move || !is_generating && !is_failed>
                                     <div class="flex flex-wrap items-center gap-3">
+                                        <a
+                                            class="inline-flex items-center rounded-full border border-blue-700 px-5 py-2 text-sm font-semibold text-blue-300 hover:border-blue-400 hover:bg-blue-950"
+                                            href=format!("/api/summaries/{}/download/pdf", sid)
+                                            rel="external"
+                                        >
+                                            "↓ PDF"
+                                        </a>
                                         <button
                                             class="inline-flex items-center rounded-full border border-slate-700 px-5 py-2 text-sm font-semibold text-slate-300 hover:border-slate-400 hover:bg-slate-800"
                                             on:click=move |_| download_markdown()

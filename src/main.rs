@@ -17,6 +17,7 @@ async fn main() {
             flashcards::handlers::anki_export::download_deck_as_anki,
             projects::handlers::{get_project_pdf, get_project_segment_pdf, upload_project_file},
             projects::storage::{build_minio_client, MinioSettings},
+            summaries::handlers::pdf_export::download_summary_pdf,
         },
     };
     use leptos::prelude::*;
@@ -117,6 +118,10 @@ async fn main() {
         .route(
             "/api/decks/{deck_id}/download/anki",
             get(download_deck_as_anki),
+        )
+        .route(
+            "/api/summaries/{summary_id}/download/pdf",
+            get(download_summary_pdf),
         )
         .layer(DefaultBodyLimit::max(config.max_upload_bytes))
         .leptos_routes_with_context(
