@@ -25,7 +25,13 @@ cp .env.example .env
 # Edit .env with your admin credentials and API keys
 ```
 
-3. Run development server:
+3. Set up the database:
+```bash
+sqlx database create
+sqlx migrate run
+```
+
+4. Run development server:
 ```bash
 cargo leptos watch
 ```
