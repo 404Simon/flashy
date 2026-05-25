@@ -17,7 +17,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util", "proces
 tokio-util = { version = "0.7", optional = true }
 futures-util = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2.106", optional = true }
-sqlx = { version = "0.9", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "time"], default-features = false, optional = true }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "macros", "migrate", "time"], default-features = false, optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 dotenvy = { version = "0.15", optional = true }
@@ -127,9 +127,6 @@ end2end-dir = "end2end"
 
 #  The browserlist query used for optimizing the CSS.
 browserquery = "defaults"
-
-# The environment Leptos will run in, usually either "DEV" or "PROD"
-env = "DEV"
 
 # The features to use when compiling the bin target
 #
