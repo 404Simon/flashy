@@ -38,18 +38,10 @@ impl SqliteStore {
     }
 
     pub async fn migrate(&self) -> sqlx::Result<()> {
-        let query = format!(
-            r#"
-            create table if not exists {}
-            (
-                id text primary key not null,
-                data blob not null,
-                expiry_date integer not null
-            )
-            "#,
-            self.table_name
-        );
-        sqlx::query(&query).execute(&self.pool).await?;
+        let mut q = sqlx::QueryBuilder::new("create table if not exists ");
+        q.push(&self.table_name);
+        q.push(" (id text primary key not null, data blob not null, expiry_date integer not null)");
+        q.build().execute(&self.pool).await?;
         Ok(())
     }
 
@@ -58,19 +50,16 @@ impl SqliteStore {
         conn: &mut SqliteConnection,
         record: &Record,
     ) -> session_store::Result<bool> {
-        let query = format!(
-            r#"
-            insert or abort into {table_name}
-              (id, data, expiry_date) values (?, ?, ?)
-            "#,
-            table_name = self.table_name
-        );
-        let res = sqlx::query(&query)
-            .bind(record.id.to_string())
-            .bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
-            .execute(conn)
-            .await;
+        let mut q = sqlx::QueryBuilder::new("insert or abort into ");
+        q.push(&self.table_name);
+        q.push(" (id, data, expiry_date) values (");
+        q.push_bind(record.id.to_string());
+        q.push(", ");
+        q.push_bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?);
+        q.push(", ");
+        q.push_bind(record.expiry_date);
+        q.push(")");
+        let res = q.build().execute(conn).await;
 
         match res {
             Ok(_) => Ok(true),
@@ -84,20 +73,16 @@ impl SqliteStore {
         conn: &mut SqliteConnection,
         record: &Record,
     ) -> session_store::Result<()> {
-        let query = format!(
-            r#"
-            insert into {table_name}
-              (id, data, expiry_date) values (?, ?, ?)
-            on conflict(id) do update set
-              data = excluded.data,
-              expiry_date = excluded.expiry_date
-            "#,
-            table_name = self.table_name
-        );
-        sqlx::query(&query)
-            .bind(record.id.to_string())
-            .bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
+        let mut q = sqlx::QueryBuilder::new("insert into ");
+        q.push(&self.table_name);
+        q.push(" (id, data, expiry_date) values (");
+        q.push_bind(record.id.to_string());
+        q.push(", ");
+        q.push_bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?);
+        q.push(", ");
+        q.push_bind(record.expiry_date);
+        q.push(") on conflict(id) do update set data = excluded.data, expiry_date = excluded.expiry_date");
+        q.build()
             .execute(conn)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -109,14 +94,10 @@ impl SqliteStore {
 #[async_trait]
 impl ExpiredDeletion for SqliteStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
-        let query = format!(
-            r#"
-            delete from {table_name}
-            where datetime(expiry_date) < datetime('now')
-            "#,
-            table_name = self.table_name
-        );
-        sqlx::query(&query)
+        let mut q = sqlx::QueryBuilder::new("delete from ");
+        q.push(&self.table_name);
+        q.push(" where datetime(expiry_date) < datetime('now')");
+        q.build()
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -144,16 +125,14 @@ impl SessionStore for SqliteStore {
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        let query = format!(
-            r#"
-            select data from {}
-            where id = ? and expiry_date > ?
-            "#,
-            self.table_name
-        );
-        let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
-            .bind(session_id.to_string())
-            .bind(OffsetDateTime::now_utc())
+        let mut q = sqlx::QueryBuilder::new("select data from ");
+        q.push(&self.table_name);
+        q.push(" where id = ");
+        q.push_bind(session_id.to_string());
+        q.push(" and expiry_date > ");
+        q.push_bind(OffsetDateTime::now_utc());
+        let data: Option<(Vec<u8>,)> = q
+            .build_query_as()
             .fetch_optional(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -168,14 +147,11 @@ impl SessionStore for SqliteStore {
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        let query = format!(
-            r#"
-            delete from {} where id = ?
-            "#,
-            self.table_name
-        );
-        sqlx::query(&query)
-            .bind(session_id.to_string())
+        let mut q = sqlx::QueryBuilder::new("delete from ");
+        q.push(&self.table_name);
+        q.push(" where id = ");
+        q.push_bind(session_id.to_string());
+        q.build()
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
