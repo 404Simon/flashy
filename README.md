@@ -23,6 +23,8 @@ pnpm install
 ```bash
 cp .env.example .env
 # Edit .env with your admin credentials and API keys
+# If using docker-compose-dev, change minio hosts (e.g. minio:9000)
+# to localhost:9000 since your app runs outside the Docker network.
 ```
 
 3. Set up the database:
