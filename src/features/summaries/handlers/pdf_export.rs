@@ -43,17 +43,14 @@ pub async fn download_summary_pdf(
     let content_html = markdown_to_html(&summary.content_markdown);
     let full_html = build_pdf_html(&summary.title, &content_html);
 
-    let mut temp_file = tempfile::NamedTempFile::with_suffix(".html")
-        .map_err(|e| {
-            tracing::error!("Failed to create temp file: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    temp_file
-        .write_all(full_html.as_bytes())
-        .map_err(|e| {
-            tracing::error!("Failed to write temp HTML: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let mut temp_file = tempfile::NamedTempFile::with_suffix(".html").map_err(|e| {
+        tracing::error!("Failed to create temp file: {e}");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    temp_file.write_all(full_html.as_bytes()).map_err(|e| {
+        tracing::error!("Failed to write temp HTML: {e}");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     temp_file.flush().map_err(|e| {
         tracing::error!("Failed to flush temp HTML: {e}");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
