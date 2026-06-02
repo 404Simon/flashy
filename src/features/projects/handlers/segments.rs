@@ -195,7 +195,7 @@ pub async fn get_segment_stats(
     .await
     .map_err(ServerFnError::new)?;
 
-    let text = crate::features::projects::processing::extract_text_for_ranges_with_pdftotext(
+    let text = crate::features::projects::processing::extract_text_for_ranges(
         temp_path.as_ref(),
         pdf_size,
         &merged,

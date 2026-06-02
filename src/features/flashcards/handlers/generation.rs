@@ -33,7 +33,7 @@ For every algorithm/concept, generate cards covering:
 * **Conceptual Depth:** Explain "how/why," techniques (DP, Greedy), and trade-offs.
 
 ### 3. Execution Logic
-1. Parse `pdftotext` output.
+1. Parse `pdf-extract` output.
 2. Ensure all mathematical symbols are wrapped in **MathJax** delimiters with **properly escaped backslashes** (`\\(`, `\\)`, `\\[`, `\\]`).
 3. Generate comprehensive flashcards covering all major concepts, definitions, algorithms, and formulas.
 
@@ -571,7 +571,7 @@ async fn process_generation_job(
         .await
         .map_err(|e| e.to_string())?;
 
-        crate::features::projects::processing::extract_text_for_ranges_with_pdftotext(
+        crate::features::projects::processing::extract_text_for_ranges(
             temp_path.as_ref(),
             pdf_size,
             &ranges,

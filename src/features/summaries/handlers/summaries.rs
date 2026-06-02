@@ -253,7 +253,7 @@ async fn process_summary_generation(
         .await
         .map_err(|e| e.to_string())?;
 
-        crate::features::projects::processing::extract_text_for_ranges_with_pdftotext(
+        crate::features::projects::processing::extract_text_for_ranges(
             temp_path.as_ref(),
             pdf_size,
             &ranges,

@@ -1,14 +1,11 @@
 #[cfg(feature = "ssr")]
-use std::{path::Path, process::Stdio, time::Duration};
+use std::path::Path;
 
 #[cfg(feature = "ssr")]
 use crate::features::projects::models::SegmentRange;
 
 #[cfg(feature = "ssr")]
-const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(20);
-
-#[cfg(feature = "ssr")]
-pub async fn extract_text_with_pdftotext(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
+pub async fn extract_text(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
     use crate::config::Config;
 
     let config = Config::global();
@@ -19,36 +16,12 @@ pub async fn extract_text_with_pdftotext(pdf_path: &Path, pdf_size: u64) -> Resu
         ));
     }
 
-    let mut command = tokio::process::Command::new("pdftotext");
-    command
-        .arg("-layout")
-        .arg("-q")
-        .arg(pdf_path)
-        .arg("-")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let child = command
-        .spawn()
-        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
-
-    let output = tokio::time::timeout(PDFTOTEXT_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| "pdftotext timed out".to_string())?
-        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pdftotext failed: {stderr}"));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let bytes = std::fs::read(pdf_path).map_err(|e| format!("Failed to read PDF: {e}"))?;
+    pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Failed to extract text: {e}"))
 }
 
 #[cfg(feature = "ssr")]
-pub async fn extract_text_for_ranges_with_pdftotext(
+pub async fn extract_text_for_ranges(
     pdf_path: &Path,
     pdf_size: u64,
     ranges: &[SegmentRange],
@@ -68,54 +41,26 @@ pub async fn extract_text_for_ranges_with_pdftotext(
         return Ok(String::new());
     }
 
+    let bytes = std::fs::read(pdf_path).map_err(|e| format!("Failed to read PDF: {e}"))?;
+    let all_pages = pdf_extract::extract_text_from_mem_by_pages(&bytes)
+        .map_err(|e| format!("Failed to extract text: {e}"))?;
+
     let mut combined = String::new();
     for range in merged {
-        let chunk = extract_text_for_range(pdf_path, range.start_page, range.end_page).await?;
-        if !combined.is_empty() {
-            combined.push('\n');
+        let start = (range.start_page.max(1) - 1) as usize;
+        let end = (range.end_page as usize).min(all_pages.len());
+        if start >= end || start >= all_pages.len() {
+            continue;
         }
-        combined.push_str(&chunk);
+        for (i, page_text) in all_pages[start..end].iter().enumerate() {
+            if i > 0 || !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(page_text);
+        }
     }
 
     Ok(combined)
-}
-
-#[cfg(feature = "ssr")]
-async fn extract_text_for_range(
-    pdf_path: &Path,
-    start_page: i64,
-    end_page: i64,
-) -> Result<String, String> {
-    let mut command = tokio::process::Command::new("pdftotext");
-    command
-        .arg("-layout")
-        .arg("-q")
-        .arg("-f")
-        .arg(start_page.to_string())
-        .arg("-l")
-        .arg(end_page.to_string())
-        .arg(pdf_path)
-        .arg("-")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let child = command
-        .spawn()
-        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
-
-    let output = tokio::time::timeout(PDFTOTEXT_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| "pdftotext timed out".to_string())?
-        .map_err(|e| format!("Failed to run pdftotext: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pdftotext failed: {stderr}"));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[cfg(feature = "ssr")]
@@ -215,7 +160,7 @@ pub async fn process_file_async(
         .len();
 
     // Extract text
-    let result = match extract_text_with_pdftotext(&temp_path, file_size).await {
+    let result = match extract_text(&temp_path, file_size).await {
         Ok(extracted_text) => {
             sqlx::query(
                 "UPDATE project_files SET extracted_text = ?, processing_status = 'completed' WHERE id = ?",
