@@ -1,21 +1,99 @@
 #[cfg(feature = "ssr")]
-use std::io::Write;
+use axum::extract::{Path, State};
+#[cfg(feature = "ssr")]
+use axum::http::{header, HeaderName, StatusCode};
+#[cfg(feature = "ssr")]
+use markdown2pdf::config::ConfigSource;
+#[cfg(feature = "ssr")]
+use tower_sessions::Session;
+
+#[cfg(feature = "ssr")]
+use crate::app_state::AppState;
+#[cfg(feature = "ssr")]
+use crate::features::auth::utils::get_user_from_session;
+
+/// Embedded TOML configuration for study summary PDFs.
+///
+/// Uses the `academic` theme as a baseline and overrides values that
+/// produce a clean, scannable layout for AI-generated summaries.
+#[cfg(feature = "ssr")]
+const PDF_STYLE: &str = r##"
+theme = "academic"
+
+[defaults]
+font_size_pt = 10.5
+line_height = 1.55
+text_color = "#1B1F23"
+
+[page]
+margins = { top = 20.0, right = 22.0, bottom = 20.0, left = 22.0 }
+
+[headings.h1]
+font_size_pt = 20.0
+margin_before_pt = 10.0
+margin_after_pt = 4.0
+
+[headings.h2]
+font_size_pt = 14.0
+margin_before_pt = 8.0
+margin_after_pt = 3.0
+
+[headings.h3]
+font_size_pt = 12.0
+margin_before_pt = 6.0
+
+[paragraph]
+margin_after_pt = 5.0
+
+[code_block]
+font_family = "Courier"
+font_size_pt = 8.5
+background_color = "#F6F8FA"
+padding = { top = 8.0, right = 10.0, bottom = 8.0, left = 10.0 }
+margin_before_pt = 5.0
+margin_after_pt = 5.0
+
+[code_inline]
+font_family = "Courier"
+font_size_pt = 9.0
+background_color = "#EFF1F3"
+
+[list.common]
+indent_per_level_pt = 15.0
+
+[table]
+row_gap_pt = 1.5
+cell_padding = { top = 3.0, right = 4.0, bottom = 3.0, left = 4.0 }
+
+[table.border.all]
+width_pt = 0.4
+color = "#D0D7DE"
+
+[math]
+scale = 1.05
+color = "#1A1A1A"
+
+[footer]
+center = "{page} / {total_pages}"
+
+[toc]
+enabled = true
+title = "Contents"
+max_depth = 3
+"##;
 
 #[cfg(feature = "ssr")]
 pub async fn download_summary_pdf(
-    axum::extract::Path(summary_id): axum::extract::Path<i64>,
-    axum::extract::State(app_state): axum::extract::State<crate::app_state::AppState>,
-    session: tower_sessions::Session,
-) -> Result<([(axum::http::HeaderName, String); 2], Vec<u8>), axum::http::StatusCode> {
-    use axum::http::{header, HeaderName};
-
-    use crate::features::auth::utils::get_user_from_session;
-    use crate::features::flashcards::markdown::markdown_to_html;
+    Path(summary_id): Path<i64>,
+    State(app_state): State<AppState>,
+    session: Session,
+) -> Result<([(HeaderName, String); 2], Vec<u8>), StatusCode> {
+    #[cfg(feature = "ssr")]
     use crate::features::summaries::models::Summary;
 
     let user = get_user_from_session(&session)
         .await
-        .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let summary = sqlx::query_as!(
         Summary,
@@ -32,51 +110,30 @@ pub async fn download_summary_pdf(
     .await
     .map_err(|e| {
         tracing::error!("Failed to fetch summary for PDF: {e}");
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        StatusCode::INTERNAL_SERVER_ERROR
     })?
-    .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    .ok_or(StatusCode::NOT_FOUND)?;
 
     if summary.status != "completed" {
-        return Err(axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    let content_html = markdown_to_html(&summary.content_markdown);
-    let full_html = build_pdf_html(&summary.title, &content_html);
+    let markdown = convert_math_delimiters(&summary.content_markdown);
 
-    let mut temp_file = tempfile::NamedTempFile::with_suffix(".html").map_err(|e| {
-        tracing::error!("Failed to create temp file: {e}");
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    temp_file.write_all(full_html.as_bytes()).map_err(|e| {
-        tracing::error!("Failed to write temp HTML: {e}");
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    temp_file.flush().map_err(|e| {
-        tracing::error!("Failed to flush temp HTML: {e}");
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let html_path = temp_file.path().to_path_buf();
-
-    let pdf_bytes = tokio::task::spawn_blocking(move || render_html_to_pdf(&html_path))
-        .await
-        .map_err(|e| {
-            tracing::error!("Blocking task join error: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .map_err(|err_msg| {
-            tracing::error!("PDF render failed: {err_msg}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    // temp_file is dropped here, cleaning up the HTML file
+    let pdf_bytes =
+        markdown2pdf::parse_into_bytes(markdown, ConfigSource::Embedded(PDF_STYLE), None).map_err(
+            |e| {
+                tracing::error!("PDF generation failed: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+        )?;
 
     let filename = sanitize_pdf_filename(&summary.title);
-
     let content_disposition = format!("attachment; filename=\"{filename}\"");
+
     Ok((
         [
-            (header::CONTENT_TYPE, "application/pdf".to_string()),
+            (header::CONTENT_TYPE, "application/pdf".into()),
             (
                 HeaderName::from_static("content-disposition"),
                 content_disposition,
@@ -86,181 +143,29 @@ pub async fn download_summary_pdf(
     ))
 }
 
+/// Converts MathJax-style LaTeX delimiters to markdown2pdf-compatible ones.
+///
+/// markdown2pdf uses `$…$` / `$$…$$` (standard Markdown math), while the
+/// AI-generated summaries use `\(…\)` / `\[…\]` (MathJax convention).
+/// Also replaces `|` with `\vert` inside math content, since raw pipes
+/// break GFM table parsing when math appears in table cells.
 #[cfg(feature = "ssr")]
-fn build_pdf_html(title: &str, content_html: &str) -> String {
-    let title_escaped = title
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;");
+fn convert_math_delimiters(markdown: &str) -> String {
+    use regex::Regex;
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-<script>
-MathJax = {{
-  tex: {{
-    inlineMath: [['$', '$'], ['\\(', '\\)']],
-    displayMath: [['$$', '$$'], ['\\[', '\\]']],
-    processEscapes: true
-  }},
-  svg: {{ fontCache: 'global' }}
-}};
-</script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'Liberation Serif', 'Georgia', 'Times New Roman', serif;
-    font-size: 12pt;
-    line-height: 1.7;
-    color: #1a1a1a;
-    max-width: 100%;
-    padding: 0.75in 1in;
-  }}
-  h1 {{ font-size: 20pt; margin: 0.5em 0 0.3em; page-break-after: avoid; }}
-  h2 {{ font-size: 16pt; margin: 0.5em 0 0.3em; page-break-after: avoid; }}
-  h3 {{ font-size: 14pt; margin: 0.4em 0 0.2em; page-break-after: avoid; }}
-  h4 {{ font-size: 12pt; margin: 0.4em 0 0.2em; page-break-after: avoid; }}
-  p {{ margin: 0.3em 0; }}
-  pre, code {{ font-family: 'Liberation Mono', 'Courier New', monospace; font-size: 10pt; }}
-  pre {{
-    background: #f5f5f5;
-    padding: 0.8em;
-    margin: 0.5em 0;
-    border-radius: 4px;
-    overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }}
-  code {{ background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 2px; }}
-  pre code {{ background: none; padding: 0; }}
-  table {{ border-collapse: collapse; margin: 0.5em 0; width: 100%; }}
-  th, td {{ border: 1px solid #ccc; padding: 0.4em 0.6em; text-align: left; }}
-  th {{ background: #f0f0f0; font-weight: 600; }}
-  blockquote {{
-    border-left: 3px solid #ccc;
-    margin: 0.5em 0;
-    padding-left: 1em;
-    color: #555;
-  }}
-  ul, ol {{ margin: 0.3em 0; padding-left: 2em; }}
-  li {{ margin: 0.15em 0; }}
-  img {{ max-width: 100%; }}
-  .page-break {{ page-break-before: always; }}
-  @media print {{
-    body {{ padding: 0; }}
-  }}
-</style>
-</head>
-<body>
-<div id="mathjax-content">
-{content}
-</div>
-<script>
-(function() {{
-  function signalReady() {{
-    var el = document.createElement('div');
-    el.id = 'mathjax-done';
-    el.style.display = 'none';
-    document.body.appendChild(el);
-  }}
-  function typesetWhenReady() {{
-    if (window.MathJax && MathJax.typesetPromise) {{
-      MathJax.typesetPromise().then(signalReady).catch(signalReady);
-    }} else {{
-      signalReady();
-    }}
-  }}
-  if (document.readyState === 'complete') {{
-    typesetWhenReady();
-  }} else {{
-    window.addEventListener('load', typesetWhenReady);
-  }}
-  setTimeout(signalReady, 15000);
-}})();
-</script>
-</body>
-</html>"#,
-        title = title_escaped,
-        content = content_html,
-    )
-}
-
-#[cfg(feature = "ssr")]
-fn render_html_to_pdf(html_path: &std::path::Path) -> Result<Vec<u8>, String> {
-    use std::ffi::OsString;
-
-    use headless_chrome::types::PrintToPdfOptions;
-    use headless_chrome::{Browser, LaunchOptions};
-
-    let chrome_args = [
-        OsString::from("--no-sandbox"),
-        OsString::from("--disable-gpu"),
-        OsString::from("--disable-dev-shm-usage"),
-        OsString::from("--allow-file-access-from-files"),
-    ];
-    let chrome_args_refs: Vec<&std::ffi::OsStr> =
-        chrome_args.iter().map(|a| a.as_os_str()).collect();
-
-    let mut builder = LaunchOptions::default_builder();
-    builder.headless(true);
-    builder.sandbox(false);
-    builder.window_size(Some((1200, 1600)));
-    builder.args(chrome_args_refs);
-    let launch_options = builder
-        .build()
-        .map_err(|e| format!("Failed to build launch options: {e}"))?;
-
-    let browser =
-        Browser::new(launch_options).map_err(|e| format!("Failed to launch browser: {e}"))?;
-
-    let tab = browser
-        .new_tab()
-        .map_err(|e| format!("Failed to create tab: {e}"))?;
-
-    let file_url = format!("file://{}", html_path.display());
-    tab.navigate_to(&file_url)
-        .map_err(|e| format!("Failed to navigate to HTML: {e}"))?;
-
-    tab.wait_until_navigated()
-        .map_err(|e| format!("Failed waiting for page load: {e}"))?;
-
-    tab.wait_for_element_with_custom_timeout("#mathjax-done", std::time::Duration::from_secs(20))
-        .map_err(|e| format!("MathJax render timeout: {e}"))?;
-
-    tab.wait_for_element_with_custom_timeout("body", std::time::Duration::from_secs(2))
-        .map_err(|_| "Body not found after MathJax".to_string())?;
-
-    let pdf_options = Some(PrintToPdfOptions {
-        landscape: None,
-        display_header_footer: None,
-        print_background: Some(true),
-        scale: None,
-        paper_width: None,
-        paper_height: None,
-        margin_top: Some(0.5),
-        margin_bottom: Some(0.5),
-        margin_left: Some(0.5),
-        margin_right: Some(0.5),
-        page_ranges: None,
-        header_template: None,
-        footer_template: None,
-        prefer_css_page_size: Some(true),
-        transfer_mode: None,
-        generate_document_outline: None,
-        generate_tagged_pdf: None,
-        ignore_invalid_page_ranges: None,
+    // Display math \[...\] — replace pipes, then swap delimiters.
+    let display_re = Regex::new(r"(?s)\\\[(.*?)\\\]").unwrap();
+    let result = display_re.replace_all(markdown, |caps: &regex::Captures| {
+        format!("$${}$$", caps[1].replace('|', r"\vert "))
     });
 
-    let pdf_bytes = tab
-        .print_to_pdf(pdf_options)
-        .map_err(|e| format!("Failed to print PDF: {e}"))?;
+    // Inline math \(...\).
+    let inline_re = Regex::new(r"(?s)\\\((.*?)\\\)").unwrap();
+    let result = inline_re.replace_all(&result, |caps: &regex::Captures| {
+        format!("${}$", caps[1].replace('|', r"\vert "))
+    });
 
-    Ok(pdf_bytes)
+    result.to_string()
 }
 
 #[cfg(feature = "ssr")]
