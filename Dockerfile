@@ -73,16 +73,22 @@ ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 RUN cargo leptos build --release -vv
 
 # =============================================================================
-# Stage 3: Runner - Minimal Debian slim image with runtime dependencies
+# Stage 3: Runtime Dependencies - Build minimal sqlx for runtime
 # =============================================================================
-FROM debian:13-slim
+FROM rustlang/rust:nightly-alpine AS runtime-tools
 
-RUN apt-get update && \
-  apt-get install -y --no-install-recommends \
-  ca-certificates \
-  poppler-utils \
-  wget \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache libc-dev openssl-dev sqlite-dev musl-dev
+
+# Build sqlx statically for distroless
+RUN cargo install sqlx-cli --no-default-features --features sqlite --locked \
+  --target x86_64-unknown-linux-musl || \
+  cargo install sqlx-cli --no-default-features --features sqlite --locked
+
+# =============================================================================
+# Stage 4: Runner - Distroless minimal runtime image
+# =============================================================================
+# :debug needed for busybox shell for entrypoint script
+FROM gcr.io/distroless/cc-debian13:debug
 
 WORKDIR /app
 
@@ -92,7 +98,7 @@ COPY --from=builder --chmod=644 /work/Cargo.toml /app/Cargo.toml
 COPY --from=builder /work/target/site /app/site
 COPY --from=builder /work/migrations /app/migrations
 
-COPY --from=tool-cache --chmod=755 /usr/local/cargo/bin/sqlx /app/sqlx
+COPY --from=runtime-tools --chmod=755 /usr/local/cargo/bin/sqlx /app/sqlx
 
 COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
@@ -106,6 +112,6 @@ EXPOSE 8080
 VOLUME ["/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
+  CMD ["/busybox/wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
 
-ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/busybox/sh", "/app/docker-entrypoint.sh"]
