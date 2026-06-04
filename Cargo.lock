@@ -2209,7 +2209,7 @@ dependencies = [
  "leptos_meta",
  "leptos_router",
  "llm",
- "lopdf 0.40.0",
+ "lopdf 0.41.0",
  "markdown2pdf",
  "pdf-extract",
  "pulldown-cmark 0.13.4",
@@ -3754,9 +3754,9 @@ dependencies = [
 
 [[package]]
 name = "lopdf"
-version = "0.40.0"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73fdcbab5b237a03984f83b1394dc534e0b1960675c7f3ec4d04dccc9032b56d"
+checksum = "67513274c50a2b51e5f75d9e682fcf4ab064a8a9c9ae2c3c59309084882bb24d"
 dependencies = [
  "aes 0.8.4",
  "bitflags 2.11.1",
@@ -3772,7 +3772,6 @@ dependencies = [
  "log",
  "md-5 0.10.6",
  "nom",
- "nom_locate",
  "rand 0.10.1",
  "rangemap",
  "rayon",
