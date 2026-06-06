@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::features::flashcards::{
-    list_flashcards_by_file, markdown::markdown_to_html, FileCardGroup, GenerationJobWithFile,
+    FileCardGroup, GenerationJobWithFile, list_flashcards_by_file, markdown::markdown_to_html,
 };
 
 // ============= ACTION BAR =============

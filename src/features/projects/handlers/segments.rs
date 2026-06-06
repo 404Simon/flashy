@@ -12,7 +12,7 @@ use crate::features::auth::utils::require_auth;
 pub async fn get_project_file_outline(file_id: i64) -> Result<PdfOutlineResponse, ServerFnError> {
     use sqlx::SqlitePool;
     use std::time::Instant;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     let user = require_auth().await?;
     tracing::info!(
@@ -683,10 +683,10 @@ fn find_in_name_tree(
 
     if let Ok(Object::Array(kids)) = dict.get(b"Kids") {
         for kid in kids {
-            if let Ok(resolved) = resolve_object(doc, kid) {
-                if let Some(found) = find_in_name_tree(doc, resolved, name) {
-                    return Some(found);
-                }
+            if let Ok(resolved) = resolve_object(doc, kid)
+                && let Some(found) = find_in_name_tree(doc, resolved, name)
+            {
+                return Some(found);
             }
         }
     }

@@ -5,8 +5,8 @@ pub async fn get_project_pdf(
     session: tower_sessions::Session,
 ) -> Result<axum::response::Response, (axum::http::StatusCode, String)> {
     use axum::body::Body;
-    use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
     use axum::http::HeaderValue;
+    use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
     use axum::response::IntoResponse;
     use sqlx::SqlitePool;
 
@@ -102,8 +102,8 @@ pub async fn get_project_segment_pdf(
     session: tower_sessions::Session,
 ) -> Result<axum::response::Response, (axum::http::StatusCode, String)> {
     use axum::body::Body;
-    use axum::http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
     use axum::http::HeaderValue;
+    use axum::http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
     use axum::response::IntoResponse;
     use sqlx::SqlitePool;
 

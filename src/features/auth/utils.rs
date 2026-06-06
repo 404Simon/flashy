@@ -1,5 +1,5 @@
 #[cfg(feature = "ssr")]
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 #[cfg(feature = "ssr")]
 use leptos::prelude::ServerFnError;
 #[cfg(feature = "ssr")]

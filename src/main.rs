@@ -3,9 +3,9 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use axum::Router;
     use axum::extract::DefaultBodyLimit;
     use axum::routing::{get, post};
-    use axum::Router;
     use flashy::session_store::SqliteStore;
     use flashy::{
         app::*,
@@ -16,12 +16,12 @@ async fn main() {
             auth::utils::ensure_admin_user,
             flashcards::handlers::anki_export::download_deck_as_anki,
             projects::handlers::{get_project_pdf, get_project_segment_pdf, upload_project_file},
-            projects::storage::{build_minio_client, MinioSettings},
+            projects::storage::{MinioSettings, build_minio_client},
             summaries::handlers::pdf_export::download_summary_pdf,
         },
     };
     use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use leptos_axum::{LeptosRoutes, generate_route_list};
     use time::Duration;
     use tower_sessions::{Expiry, SessionManagerLayer};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

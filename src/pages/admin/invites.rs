@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::{
-    features::invites::handlers::{list_invites, CreateInvite},
+    features::invites::handlers::{CreateInvite, list_invites},
     pages::admin::layout::AdminLayout,
 };
 

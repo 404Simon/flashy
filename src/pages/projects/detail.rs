@@ -3,18 +3,18 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use std::collections::BTreeSet;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use crate::components::modal::Modal;
 use crate::config_handlers::get_app_config;
 use crate::features::{
     auth::models::UserSession,
-    flashcards::{list_decks_for_project, StartGenerationJob},
+    flashcards::{StartGenerationJob, list_decks_for_project},
     projects::handlers::{
-        delete_project_file, get_project, get_project_file_outline, get_project_file_text,
-        get_segment_stats, list_project_files, SaveSegmentPdf,
+        SaveSegmentPdf, delete_project_file, get_project, get_project_file_outline,
+        get_project_file_text, get_segment_stats, list_project_files,
     },
     projects::models::{PdfTocEntry, SegmentRange, SegmentStats},
     summaries::StartSummaryGeneration,

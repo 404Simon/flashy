@@ -4,7 +4,7 @@ use leptos_router::hooks::use_params_map;
 use crate::features::{
     auth::models::UserSession,
     projects::handlers::get_project,
-    summaries::{delete_summary, list_summaries_for_project, SummaryListItem},
+    summaries::{SummaryListItem, delete_summary, list_summaries_for_project},
 };
 
 #[component]

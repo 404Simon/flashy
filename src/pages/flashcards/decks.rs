@@ -3,7 +3,7 @@ use leptos_router::hooks::use_params_map;
 
 use crate::features::{
     auth::models::UserSession,
-    flashcards::{list_decks_for_project, CreateDeck, DeckSummary},
+    flashcards::{CreateDeck, DeckSummary, list_decks_for_project},
     projects::handlers::get_project,
 };
 

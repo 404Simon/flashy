@@ -1,7 +1,7 @@
 #[cfg(feature = "ssr")]
-use aws_sdk_s3::config::{Credentials, Region};
-#[cfg(feature = "ssr")]
 use aws_sdk_s3::Client;
+#[cfg(feature = "ssr")]
+use aws_sdk_s3::config::{Credentials, Region};
 
 #[cfg(feature = "ssr")]
 #[derive(Clone, Debug)]

@@ -1,8 +1,9 @@
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, Link, MetaTags, Stylesheet, Title};
+use leptos_meta::{Link, MetaTags, Stylesheet, Title, provide_meta_context};
 use leptos_router::{
+    StaticSegment,
     components::{Route, Router, Routes},
-    path, StaticSegment,
+    path,
 };
 
 use crate::{features::auth::handlers::get_user, pages::*};

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use sqlx::{sqlite::SqlitePool, SqliteConnection};
+use sqlx::{SqliteConnection, sqlite::SqlitePool};
 use time::OffsetDateTime;
 use tower_sessions_core::{
+    SessionStore,
     session::{Id, Record},
     session_store::{self, ExpiredDeletion},
-    SessionStore,
 };
 
 use crate::session_store::SqlxStoreError;

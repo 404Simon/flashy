@@ -12,8 +12,8 @@ pub async fn download_deck_as_anki(
     use rusqlite::Connection;
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     use crate::features::auth::utils::get_user_from_session;
 

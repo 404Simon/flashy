@@ -2,7 +2,7 @@ use leptos::prelude::*;
 
 use crate::features::{
     auth::models::UserSession,
-    projects::handlers::{list_projects, CreateProject},
+    projects::handlers::{CreateProject, list_projects},
 };
 
 #[component]

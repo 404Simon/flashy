@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::{
-    features::auth::admin_handlers::{list_users, DeleteUser, ToggleUserAdmin},
+    features::auth::admin_handlers::{DeleteUser, ToggleUserAdmin, list_users},
     pages::admin::layout::AdminLayout,
 };
 

@@ -3,7 +3,7 @@ use leptos_router::hooks::use_params_map;
 
 use crate::features::{
     auth::models::UserSession,
-    flashcards::{get_deck, list_flashcards, markdown::markdown_to_html, Flashcard},
+    flashcards::{Flashcard, get_deck, list_flashcards, markdown::markdown_to_html},
     projects::get_file_name,
 };
 
@@ -37,10 +37,10 @@ pub fn DeckViewerPage() -> impl IntoView {
 
     let next_card = move || {
         show_answer.set(false);
-        if let Some(Ok(cards)) = cards_resource.get() {
-            if current_card_index.get() < cards.len() - 1 {
-                current_card_index.update(|i| *i += 1);
-            }
+        if let Some(Ok(cards)) = cards_resource.get()
+            && current_card_index.get() < cards.len() - 1
+        {
+            current_card_index.update(|i| *i += 1);
         }
     };
 

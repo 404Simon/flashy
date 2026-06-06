@@ -1,5 +1,5 @@
 #[cfg(feature = "ssr")]
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
 /// Initialize database connection pool and run migrations.
 #[cfg(feature = "ssr")]

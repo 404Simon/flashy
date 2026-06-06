@@ -63,29 +63,29 @@ pub fn SummaryViewerPage() -> impl IntoView {
     let download_markdown = move || {
         let sid = summary_id();
         leptos::task::spawn_local(async move {
-            if let Some(id) = sid {
-                if let Ok(md) = get_summary_markdown(id).await {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let _ = &md;
+            if let Some(id) = sid
+                && let Ok(md) = get_summary_markdown(id).await
+            {
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = &md;
 
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        use wasm_bindgen::JsCast;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    use wasm_bindgen::JsCast;
 
-                        let window = web_sys::window().unwrap();
-                        let document = window.document().unwrap();
-                        let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(
-                            &wasm_bindgen::JsValue::from_str(&md),
-                        ))
-                        .unwrap();
-                        let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
-                        let a = document.create_element("a").unwrap();
-                        let a: web_sys::HtmlElement = a.dyn_into().unwrap();
-                        a.set_attribute("href", &url).unwrap();
-                        a.set_attribute("download", "summary.md").unwrap();
-                        let _ = a.click();
-                        web_sys::Url::revoke_object_url(&url).unwrap();
-                    }
+                    let window = web_sys::window().unwrap();
+                    let document = window.document().unwrap();
+                    let blob = web_sys::Blob::new_with_str_sequence(&js_sys::Array::of1(
+                        &wasm_bindgen::JsValue::from_str(&md),
+                    ))
+                    .unwrap();
+                    let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap();
+                    let a = document.create_element("a").unwrap();
+                    let a: web_sys::HtmlElement = a.dyn_into().unwrap();
+                    a.set_attribute("href", &url).unwrap();
+                    a.set_attribute("download", "summary.md").unwrap();
+                    let _ = a.click();
+                    web_sys::Url::revoke_object_url(&url).unwrap();
                 }
             }
         });

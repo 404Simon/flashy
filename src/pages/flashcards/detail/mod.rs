@@ -99,35 +99,22 @@ pub fn DeckDetailPage() -> impl IntoView {
     };
 
     let handle_delete = move || {
-        if let Some(id) = deck_id.get_untracked() {
-            if let Some(Ok(deck)) = deck_resource.get() {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let confirmed = web_sys::window()
-                        .and_then(|w| {
-                            w.confirm_with_message(&format!(
-                                "Delete deck '{}' and all its cards?",
-                                deck.name
-                            ))
-                            .ok()
-                        })
-                        .unwrap_or(false);
+        if let Some(id) = deck_id.get_untracked()
+            && let Some(Ok(deck)) = deck_resource.get()
+        {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let confirmed = web_sys::window()
+                    .and_then(|w| {
+                        w.confirm_with_message(&format!(
+                            "Delete deck '{}' and all its cards?",
+                            deck.name
+                        ))
+                        .ok()
+                    })
+                    .unwrap_or(false);
 
-                    if confirmed {
-                        let project_id = deck.project_id;
-                        leptos::task::spawn_local(async move {
-                            if delete_deck(id).await.is_ok() {
-                                leptos_router::hooks::use_navigate()(
-                                    &format!("/projects/{}/decks", project_id),
-                                    Default::default(),
-                                );
-                            }
-                        });
-                    }
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
+                if confirmed {
                     let project_id = deck.project_id;
                     leptos::task::spawn_local(async move {
                         if delete_deck(id).await.is_ok() {
@@ -138,6 +125,19 @@ pub fn DeckDetailPage() -> impl IntoView {
                         }
                     });
                 }
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let project_id = deck.project_id;
+                leptos::task::spawn_local(async move {
+                    if delete_deck(id).await.is_ok() {
+                        leptos_router::hooks::use_navigate()(
+                            &format!("/projects/{}/decks", project_id),
+                            Default::default(),
+                        );
+                    }
+                });
             }
         }
     };

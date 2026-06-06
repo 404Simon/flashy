@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Tool Cache - Build/install cargo tools once and cache them
 # =============================================================================
-FROM rustlang/rust:nightly-slim AS tool-cache
+FROM rust:1-slim-trixie AS tool-cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   curl ca-certificates pkg-config libssl-dev \
@@ -18,7 +18,7 @@ RUN cargo install sqlx-cli --no-default-features --features sqlite,rustls --lock
 # =============================================================================
 # Stage 2: Builder - Build the Leptos SSR application
 # =============================================================================
-FROM rustlang/rust:nightly-slim AS builder
+FROM rust:1-slim-trixie AS builder
 
 RUN apt-get update && \
   apt-get install -y --no-install-recommends curl ca-certificates && \
@@ -75,7 +75,7 @@ RUN cargo leptos build --release -vv
 # =============================================================================
 # Stage 3: Runtime Dependencies - Build minimal sqlx for runtime
 # =============================================================================
-FROM rustlang/rust:nightly-alpine AS runtime-tools
+FROM rust:1-alpine AS runtime-tools
 
 RUN apk add --no-cache libc-dev openssl-dev sqlite-dev musl-dev
 
