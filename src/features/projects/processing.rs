@@ -5,6 +5,9 @@ use std::path::Path;
 use crate::features::projects::models::SegmentRange;
 
 #[cfg(feature = "ssr")]
+use serde_json;
+
+#[cfg(feature = "ssr")]
 pub async fn extract_text(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
     use crate::config::Config;
 
@@ -18,6 +21,28 @@ pub async fn extract_text(pdf_path: &Path, pdf_size: u64) -> Result<String, Stri
 
     let bytes = std::fs::read(pdf_path).map_err(|e| format!("Failed to read PDF: {e}"))?;
     pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Failed to extract text: {e}"))
+}
+
+#[cfg(feature = "ssr")]
+pub async fn compute_page_word_counts(pdf_path: &Path, pdf_size: u64) -> Result<String, String> {
+    use crate::config::Config;
+
+    let config = Config::global();
+    if pdf_size > config.max_pdf_bytes {
+        return Err(format!(
+            "Uploaded PDF exceeded the size limit of {} MB",
+            config.max_pdf_bytes / 1024 / 1024
+        ));
+    }
+
+    let bytes = std::fs::read(pdf_path).map_err(|e| format!("Failed to read PDF: {e}"))?;
+    let pages = pdf_extract::extract_text_from_mem_by_pages(&bytes)
+        .map_err(|e| format!("Failed to extract per-page text: {e}"))?;
+    let counts: Vec<i64> = pages
+        .iter()
+        .map(|p| p.split_whitespace().count() as i64)
+        .collect();
+    serde_json::to_string(&counts).map_err(|e| format!("Failed to serialize page counts: {e}"))
 }
 
 #[cfg(feature = "ssr")]
@@ -159,13 +184,17 @@ pub async fn process_file_async(
         .map_err(|e| e.to_string())?
         .len();
 
-    // Extract text
+    // Extract text and per-page word counts
     let result = match extract_text(&temp_path, file_size).await {
         Ok(extracted_text) => {
+            let page_counts = compute_page_word_counts(&temp_path, file_size).await.ok();
+
+            let counts_ref: Option<&String> = page_counts.as_ref();
             sqlx::query(
-                "UPDATE project_files SET extracted_text = ?, processing_status = 'completed' WHERE id = ?",
+                "UPDATE project_files SET extracted_text = ?, processing_status = 'completed', page_word_counts = COALESCE(?, page_word_counts) WHERE id = ?",
             )
-            .bind(extracted_text)
+            .bind(&extracted_text)
+            .bind(counts_ref)
             .bind(file_id)
             .execute(&pool)
             .await

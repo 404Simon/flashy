@@ -8,6 +8,9 @@ use crate::features::projects::models::PdfTocEntry;
 #[cfg(feature = "ssr")]
 use crate::features::auth::utils::require_auth;
 
+#[cfg(feature = "ssr")]
+use serde_json;
+
 #[server(GetProjectFileOutline)]
 pub async fn get_project_file_outline(file_id: i64) -> Result<PdfOutlineResponse, ServerFnError> {
     use sqlx::SqlitePool;
@@ -153,40 +156,43 @@ pub async fn get_segment_stats(
         None => Vec::new(),
     };
 
-    // If no ranges provided, use the full extracted text
-    if merged.is_empty() {
-        let extracted_text = row
-            .extracted_text
-            .ok_or_else(|| ServerFnError::new("File has no extracted text"))?;
-        let word_count = extracted_text.split_whitespace().count() as i64;
+    // Fast path: use cached per-page word counts
+    let page_word_counts: Option<Vec<i64>> =
+        sqlx::query_scalar("SELECT page_word_counts FROM project_files WHERE id = ?")
+            .bind(file_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .flatten()
+            .and_then(|json: String| serde_json::from_str(&json).ok());
 
-        // For page count, we need to download and check the PDF
-        let (temp_path, _pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
-            &app_state.minio_client,
-            &row.s3_bucket,
-            &row.s3_key,
-        )
-        .await
-        .map_err(ServerFnError::new)?;
-
-        // Get page count from the PDF
-        let page_count = tokio::task::spawn_blocking(move || -> Result<i64, String> {
-            use lopdf::Document;
-            use std::path::Path;
-            let doc = Document::load(temp_path.as_ref() as &Path)
-                .map_err(|e| format!("Failed to read PDF: {e}"))?;
-            Ok(doc.get_pages().len() as i64)
-        })
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .map_err(ServerFnError::new)?;
-
+    if let Some(ref counts) = page_word_counts {
+        let total_pages = counts.len() as i64;
+        let word_count = if merged.is_empty() {
+            counts.iter().sum()
+        } else {
+            let mut total = 0i64;
+            for range in &merged {
+                let start = (range.start_page.max(1) - 1) as usize;
+                let end = (range.end_page as usize).min(counts.len());
+                if start < end {
+                    total += counts[start..end].iter().sum::<i64>();
+                }
+            }
+            total
+        };
+        let page_count = if merged.is_empty() {
+            total_pages
+        } else {
+            merged.iter().map(|r| r.end_page - r.start_page + 1).sum()
+        };
         return Ok(SegmentStats {
             page_count,
             word_count,
         });
     }
 
+    // Fallback: download PDF, extract, and backfill page_word_counts
     let (temp_path, pdf_size) = crate::features::projects::processing::download_pdf_to_temp(
         &app_state.minio_client,
         &row.s3_bucket,
@@ -195,19 +201,47 @@ pub async fn get_segment_stats(
     .await
     .map_err(ServerFnError::new)?;
 
-    let text = crate::features::projects::processing::extract_text_for_ranges(
+    // Compute per-page word counts for backfill (also gives us page count)
+    let page_counts_json = crate::features::projects::processing::compute_page_word_counts(
         temp_path.as_ref(),
         pdf_size,
-        &merged,
     )
     .await
     .map_err(ServerFnError::new)?;
 
-    let word_count = text.split_whitespace().count() as i64;
-    let page_count = merged
-        .iter()
-        .map(|range| range.end_page - range.start_page + 1)
-        .sum();
+    let counts: Vec<i64> =
+        serde_json::from_str(&page_counts_json).map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let total_pages = counts.len() as i64;
+    let word_count = if merged.is_empty() {
+        let extracted_text = row
+            .extracted_text
+            .ok_or_else(|| ServerFnError::new("File has no extracted text"))?;
+        extracted_text.split_whitespace().count() as i64
+    } else {
+        let mut total = 0i64;
+        for range in &merged {
+            let start = (range.start_page.max(1) - 1) as usize;
+            let end = (range.end_page as usize).min(counts.len());
+            if start < end {
+                total += counts[start..end].iter().sum::<i64>();
+            }
+        }
+        total
+    };
+
+    let page_count = if merged.is_empty() {
+        total_pages
+    } else {
+        merged.iter().map(|r| r.end_page - r.start_page + 1).sum()
+    };
+
+    // Backfill for future requests
+    let _ = sqlx::query("UPDATE project_files SET page_word_counts = ? WHERE id = ?")
+        .bind(&page_counts_json)
+        .bind(file_id)
+        .execute(&pool)
+        .await;
 
     Ok(SegmentStats {
         page_count,
