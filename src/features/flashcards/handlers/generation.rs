@@ -480,9 +480,12 @@ pub async fn list_generation_jobs_with_files_for_deck(
         r#"
         SELECT
             gj.id as "id!: i64",
+            gj.deck_id as "deck_id!: i64",
             gj.file_id as "file_id!: i64",
             pf.original_filename as "file_name!: String",
             gj.segment_label as "segment_label: String",
+            gj.segment_ranges as "segment_ranges: String",
+            gj.prompt_template as "prompt_template: String",
             gj.status as "status!: String",
             gj.cards_generated as "cards_generated!: i64",
             gj.error_message as "error_message: String",
@@ -503,9 +506,12 @@ pub async fn list_generation_jobs_with_files_for_deck(
         .into_iter()
         .map(|row| GenerationJobWithFile {
             id: row.id,
+            deck_id: row.deck_id,
             file_id: row.file_id,
             file_name: row.file_name,
             segment_label: row.segment_label,
+            segment_ranges: row.segment_ranges,
+            prompt_template: row.prompt_template,
             status: row.status,
             cards_generated: row.cards_generated,
             error_message: row.error_message,

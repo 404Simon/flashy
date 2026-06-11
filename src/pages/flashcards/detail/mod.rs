@@ -4,13 +4,13 @@ use leptos_router::hooks::use_params_map;
 use crate::features::{
     auth::models::UserSession,
     flashcards::{
-        delete_deck, get_deck, list_files_with_cards_for_deck,
+        GenerationJobWithFile, delete_deck, get_deck, list_files_with_cards_for_deck,
         list_generation_jobs_with_files_for_deck, update_deck,
     },
 };
 
 mod components;
-use components::{ActionBar, FileCardGroupList, GenerationJobsList};
+use components::{ActionBar, FileCardGroupList, GenerationJobsList, JobDetailModal};
 
 #[component]
 pub fn DeckDetailPage() -> impl IntoView {
@@ -50,7 +50,9 @@ pub fn DeckDetailPage() -> impl IntoView {
     // Modals
     let show_rename_modal = RwSignal::new(false);
     let show_cards_modal = RwSignal::new(false);
+    let show_job_modal = RwSignal::new(false);
     let selected_file = RwSignal::new(None::<crate::features::flashcards::FileCardGroup>);
+    let selected_job = RwSignal::new(None::<GenerationJobWithFile>);
     let rename_name = RwSignal::new(String::new());
     let rename_description = RwSignal::new(String::new());
 
@@ -196,6 +198,8 @@ pub fn DeckDetailPage() -> impl IntoView {
                                                         .collect::<Vec<_>>())
                                                     .unwrap_or_default()
                                             })
+                                            show_modal=show_job_modal
+                                            selected_job=selected_job
                                         />
                                     </div>
                                 </Show>
@@ -248,6 +252,8 @@ pub fn DeckDetailPage() -> impl IntoView {
                                                         .collect::<Vec<_>>())
                                                     .unwrap_or_default()
                                             })
+                                            show_modal=show_job_modal
+                                            selected_job=selected_job
                                         />
                                     </div>
                                 </Show>
@@ -331,6 +337,14 @@ pub fn DeckDetailPage() -> impl IntoView {
                         />
                     }
                 }}
+            </Show>
+
+            // Job Detail Modal
+            <Show when=move || show_job_modal.get()>
+                <JobDetailModal
+                    job=Signal::derive(move || selected_job.get())
+                    on_close=move || show_job_modal.set(false)
+                />
             </Show>
         </section>
     }

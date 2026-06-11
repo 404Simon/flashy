@@ -86,9 +86,12 @@ pub struct FileCardGroup {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenerationJobWithFile {
     pub id: i64,
+    pub deck_id: i64,
     pub file_id: i64,
     pub file_name: String,
     pub segment_label: Option<String>,
+    pub segment_ranges: Option<String>,
+    pub prompt_template: Option<String>,
     pub status: String,
     pub cards_generated: i64,
     pub error_message: Option<String>,
