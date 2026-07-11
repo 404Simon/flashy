@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "minimumReleaseAge": "3 days",
   "packageRules": [
     {
       "matchPackageNames": [
@@ -19,6 +20,11 @@
         "patch"
       ],
       "automerge": false
+    },
+    {
+      "matchManagers": ["npm"],
+      "groupName": "npm dependencies",
+      "schedule": ["before 5am on monday"]
     }
   ],
   "lockFileMaintenance": {
