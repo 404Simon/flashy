@@ -22,7 +22,16 @@ pub const DEFAULT_PROMPT_TEMPLATE: &str = r#"# Agent Instructions: Flashcards fo
     * **IMPORTANT:** Only use LaTeX for mathematical formulas. For all other content (lists, formatting, structure), use standard Markdown syntax.
 * **Structure:**
     * **Front:** Concise question or "Formally define [Topic]."
-    * **Back:** Scannable bulleted lists using Markdown (-, *, or numbered lists).
+    * **Back:** Scannable bulleted lists using actual Markdown syntax.
+* **NO literal `\n` or `\\n` escape sequences:** Do NOT use `\n` or `\\n` to represent newlines inside card text. Use **real line breaks** in your Markdown instead. Each list item must be on its own actual line.
+* **Example of correct Markdown:**
+  ```
+  - **Input:** Graph \(G=(V,E,w)\).
+  - **Output:** Partition \((A, \bar{A})\).
+  - **Steps:**
+    1. Construct \(L = D - W\).
+    2. Compute the Fiedler vector.
+  ```
 
 ### 2. Mandatory Content Tiers
 For every algorithm/concept, generate cards covering:
@@ -36,12 +45,14 @@ For every algorithm/concept, generate cards covering:
 1. Parse `pdf-extract` output.
 2. Ensure all mathematical symbols are wrapped in **MathJax** delimiters with **properly escaped backslashes** (`\\(`, `\\)`, `\\[`, `\\]`).
 3. Generate comprehensive flashcards covering all major concepts, definitions, algorithms, and formulas.
+4. **CRITICAL:** Before finalizing, scan every string for `\n` or `\\n` escape sequences. If you find any, replace them with actual newline characters. The card text must never contain literal `\n` or `\\n`.
 
 ### 4. JSON Escaping Rules
 **IMPORTANT:** Your response must be valid JSON. Remember to:
 * Escape all backslashes as double backslashes: `\\` becomes `\\\\` in JSON strings
 * For LaTeX math delimiters: use `\\(` and `\\)` for inline, `\\[` and `\\]` for display
 * Example valid JSON: `{"front": "What is \\\\(O(n \\\\log n)\\\\)?", "back": "Linearithmic complexity"}`
+* **IMPORTANT:** Use real newlines inside JSON string values, not `\n` escape sequences.
 
 Here is the document text:
 
