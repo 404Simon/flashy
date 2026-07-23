@@ -3880,15 +3880,15 @@ dependencies = [
 
 [[package]]
 name = "markdown2pdf"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "627a124b10797dd627ec3f673d0f28a207cd685dde9d2bfabcf48e0aface5aff"
+checksum = "8688c553c9a56c235f2a647b6cab569db6fc52b04f21782aacff7d39e2ac019d"
 dependencies = [
  "clap",
  "hyphenation",
  "image",
  "log",
- "lopdf 0.39.0",
+ "lopdf 0.44.0",
  "phf",
  "phf_codegen",
  "printpdf",
@@ -6262,7 +6262,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.59.0",
