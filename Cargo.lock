@@ -550,9 +550,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.146.0"
+version = "1.146.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37b5ffaae346b9bd486ebdc3eb7053ec8ab8a1ad0f19a332eefeff036ed559e6"
+checksum = "2cd651b4400d4011b8927b83a9552bf90ff11e6e5da0b9f0a7583247aceec971"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -6122,7 +6122,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
