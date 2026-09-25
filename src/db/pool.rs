@@ -15,6 +15,17 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
 
     let pool = SqlitePoolOptions::new()
         .max_connections(max_connections as u32)
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA foreign_keys = ON")
+                    .execute(&mut *connection)
+                    .await?;
+                sqlx::query("PRAGMA busy_timeout = 5000")
+                    .execute(&mut *connection)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&database_url)
         .await?;
 
@@ -27,13 +38,6 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     sqlx::query("PRAGMA cache_size = -64000")
         .execute(&pool)
         .await?;
-    sqlx::query("PRAGMA busy_timeout = 5000")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&pool)
-        .await?;
-
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     Ok(pool)

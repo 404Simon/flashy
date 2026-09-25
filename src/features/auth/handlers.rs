@@ -9,7 +9,8 @@ use super::models::User;
 use super::models::UserSession;
 #[cfg(feature = "ssr")]
 use super::utils::{
-    clear_session, get_user_from_session, hash_password, set_user_in_session, verify_password,
+    clear_session, get_user_from_session, hash_password_bounded, set_user_in_session,
+    verify_password_bounded,
 };
 #[cfg(feature = "ssr")]
 use crate::validation::{validate_email, validate_password, validate_username};
@@ -90,7 +91,9 @@ pub async fn register_user(
         return Err(ServerFnError::new("Username already exists"));
     }
 
-    let password_hash = hash_password(&password).map_err(|e| ServerFnError::new(e.to_string()))?;
+    let password_hash = hash_password_bounded(password.clone())
+        .await
+        .map_err(|_| ServerFnError::new("Could not secure password"))?;
 
     let result = sqlx::query!(
         "INSERT INTO users (username, password_hash, email, is_admin) VALUES (?, ?, ?, 0)",
@@ -126,6 +129,10 @@ pub async fn register_user(
         is_admin: false,
     };
 
+    session
+        .cycle_id()
+        .await
+        .map_err(|_| ServerFnError::new("Authentication error"))?;
     set_user_in_session(&session, &user_session)
         .await
         .map_err(|_| ServerFnError::new("Authentication error"))?;
@@ -154,7 +161,11 @@ pub async fn login_user(username: String, password: String) -> Result<UserSessio
 
     let (valid, user_session) = match user {
         Some(user) => {
-            let valid = verify_password(&password, &user.password_hash).unwrap_or(false);
+            let password = password.clone();
+            let hash = user.password_hash.clone();
+            let valid = verify_password_bounded(password, hash)
+                .await
+                .map_err(|_| ServerFnError::new("Authentication error"))?;
             (
                 valid,
                 Some(UserSession {
@@ -165,10 +176,12 @@ pub async fn login_user(username: String, password: String) -> Result<UserSessio
             )
         }
         None => {
-            let _ = verify_password(
-                &password,
-                "$2b$12$dummy.hash.to.prevent.timing.attacks.abcdefghijklmnopqr",
-            );
+            let password = password.clone();
+            let _ = verify_password_bounded(
+                password,
+                "$2b$12$abcdefghijklmnopqrstuuP7K3QF6nNbs7Q9Y3pQ1Kc0f9QF1Ge".into(),
+            )
+            .await;
             (false, None)
         }
     };
@@ -183,6 +196,10 @@ pub async fn login_user(username: String, password: String) -> Result<UserSessio
         .await
         .map_err(|_| ServerFnError::new("Authentication error"))?;
 
+    session
+        .cycle_id()
+        .await
+        .map_err(|_| ServerFnError::new("Authentication error"))?;
     set_user_in_session(&session, &user_session)
         .await
         .map_err(|_| ServerFnError::new("Authentication error"))?;
@@ -208,7 +225,23 @@ pub async fn get_user() -> Result<Option<UserSession>, ServerFnError> {
         .await
         .map_err(|_| ServerFnError::new("Authentication error"))?;
 
-    Ok(get_user_from_session(&session).await)
+    let Some(stored) = get_user_from_session(&session).await else {
+        return Ok(None);
+    };
+    use sqlx::SqlitePool;
+    let pool = expect_context::<SqlitePool>();
+    let current = sqlx::query_as::<_, (i64, String, i64)>(
+        "SELECT id, username, is_admin FROM users WHERE id = ?",
+    )
+    .bind(stored.id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| ServerFnError::new("Authentication error"))?;
+    Ok(current.map(|u| UserSession {
+        id: u.0,
+        username: u.1,
+        is_admin: u.2 == 1,
+    }))
 }
 
 #[server(ChangePassword)]
@@ -250,25 +283,49 @@ pub async fn change_password(
     .ok_or_else(|| ServerFnError::new("User not found"))?;
 
     // Verify current password
-    let valid = verify_password(&current_password, &user.password_hash).unwrap_or(false);
+    let valid = verify_password_bounded(current_password.clone(), user.password_hash)
+        .await
+        .map_err(|_| ServerFnError::new("Authentication error"))?;
 
     if !valid {
         return Err(ServerFnError::new("Current password is incorrect"));
     }
 
     // Hash new password
-    let new_password_hash =
-        hash_password(&new_password).map_err(|e| ServerFnError::new(e.to_string()))?;
+    let new_password_hash = hash_password_bounded(new_password)
+        .await
+        .map_err(|_| ServerFnError::new("Could not secure password"))?;
 
-    // Update password in database
-    sqlx::query!(
-        "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?",
-        new_password_hash,
-        user_session.id
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    super::service::AuthService::new(pool)
+        .change_password_and_revoke_oauth(user_session.id, &new_password_hash)
+        .await
+        .map_err(|_| ServerFnError::new("Could not change password"))?;
 
     Ok(())
+}
+
+#[server(ListConnectedApplications)]
+pub async fn list_connected_applications()
+-> Result<Vec<super::models::ConnectedApplication>, ServerFnError> {
+    let user = super::utils::require_auth().await?;
+    let state = expect_context::<crate::app_state::AppState>();
+    state
+        .oauth
+        .connected_apps(user.id)
+        .await
+        .map_err(|_| ServerFnError::new("Could not load connected applications"))
+}
+
+#[server(RevokeConnectedApplication)]
+pub async fn revoke_connected_application(client_id: String) -> Result<(), ServerFnError> {
+    let user = super::utils::require_auth().await?;
+    if client_id.is_empty() || client_id.len() > 2048 {
+        return Err(ServerFnError::new("Invalid client"));
+    }
+    let state = expect_context::<crate::app_state::AppState>();
+    state
+        .oauth
+        .revoke_client(user.id, &client_id)
+        .await
+        .map_err(|_| ServerFnError::new("Could not disconnect application"))
 }

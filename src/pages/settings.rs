@@ -1,15 +1,24 @@
 use leptos::prelude::*;
 
-use crate::features::auth::handlers::ChangePassword;
+use crate::features::auth::handlers::{ChangePassword, RevokeConnectedApplication};
 
 #[component]
 pub fn SettingsPage() -> impl IntoView {
     let change_password_action = ServerAction::<ChangePassword>::new();
     let (success_message, set_success_message) = signal(Option::<String>::None);
+    let connected_apps = LocalResource::new(|| async {
+        crate::features::auth::handlers::list_connected_applications().await
+    });
+    let revoke_action = ServerAction::<RevokeConnectedApplication>::new();
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = change_password_action.value().get() {
             set_success_message.set(Some("Password changed successfully".to_string()));
+        }
+    });
+    Effect::new(move |_| {
+        if let Some(Ok(())) = revoke_action.value().get() {
+            connected_apps.refetch();
         }
     });
 
@@ -103,6 +112,26 @@ pub fn SettingsPage() -> impl IntoView {
                             </div>
                         </div>
                     </ActionForm>
+                </div>
+                <div class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <div class="space-y-2">
+                        <h2 class="text-xl font-semibold text-white">"Connected applications"</h2>
+                        <p class="text-sm text-slate-400">"Applications with read-only access to your Flashy content."</p>
+                    </div>
+                    <Suspense fallback=move || view! { <p class="text-sm text-slate-400">"Loading…"</p> }>
+                        {move || Suspend::new(async move {
+                            match connected_apps.await {
+                                Ok(apps) if apps.is_empty() => view! { <p class="text-sm text-slate-400">"No connected applications."</p> }.into_any(),
+                                Ok(apps) => view! { <ul class="divide-y divide-slate-800">{apps.into_iter().map(|app| view! {
+                                    <li class="flex items-center justify-between gap-4 py-4">
+                                        <div><p class="font-medium text-white">{app.display_name}</p><p class="max-w-md truncate text-xs text-slate-500">{app.client_id.clone()}</p></div>
+                                        <ActionForm action=revoke_action><input type="hidden" name="client_id" value=app.client_id/><button class="rounded-full border border-red-800 px-4 py-2 text-sm text-red-300" type="submit">"Disconnect"</button></ActionForm>
+                                    </li>
+                                }).collect_view()}</ul> }.into_any(),
+                                Err(_) => view! { <p class="text-sm text-red-400">"Could not load connected applications."</p> }.into_any(),
+                            }
+                        })}
+                    </Suspense>
                 </div>
             </div>
         </section>

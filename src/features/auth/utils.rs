@@ -3,6 +3,8 @@ use bcrypt::{DEFAULT_COST, hash, verify};
 #[cfg(feature = "ssr")]
 use leptos::prelude::ServerFnError;
 #[cfg(feature = "ssr")]
+use std::sync::{Arc, OnceLock};
+#[cfg(feature = "ssr")]
 use tower_sessions::Session;
 
 #[cfg(feature = "ssr")]
@@ -16,6 +18,42 @@ pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
 #[cfg(feature = "ssr")]
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
     verify(password, hash)
+}
+
+#[cfg(feature = "ssr")]
+fn password_workers() -> &'static Arc<tokio::sync::Semaphore> {
+    static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+}
+
+#[cfg(feature = "ssr")]
+pub async fn verify_password_bounded(password: String, hash: String) -> Result<bool, ()> {
+    let permit = password_workers()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        verify_password(&password, &hash).unwrap_or(false)
+    })
+    .await
+    .map_err(|_| ())
+}
+
+#[cfg(feature = "ssr")]
+pub async fn hash_password_bounded(password: String) -> Result<String, ()> {
+    let permit = password_workers()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        hash_password(&password).map_err(|_| ())
+    })
+    .await
+    .map_err(|_| ())?
 }
 
 #[cfg(feature = "ssr")]
@@ -33,20 +71,39 @@ pub async fn set_user_in_session(
 
 #[cfg(feature = "ssr")]
 pub async fn clear_session(session: &Session) -> Result<(), tower_sessions::session::Error> {
-    session.delete().await
+    // `flush` (not just `delete`) also drops the session ID, so the middleware
+    // expires the session cookie in the browser instead of leaving the dead
+    // session ID behind.
+    session.flush().await
 }
 
 #[cfg(feature = "ssr")]
 pub async fn require_auth() -> Result<UserSession, ServerFnError> {
+    use leptos::prelude::expect_context;
     use leptos_axum::extract;
+    use sqlx::SqlitePool;
 
     let session = extract::<Session>()
         .await
         .map_err(|_| ServerFnError::new("Authentication error"))?;
 
-    get_user_from_session(&session)
+    let stored = get_user_from_session(&session)
         .await
-        .ok_or_else(|| ServerFnError::new("Not authenticated"))
+        .ok_or_else(|| ServerFnError::new("Not authenticated"))?;
+    let pool = expect_context::<SqlitePool>();
+    let current = sqlx::query_as::<_, (i64, String, i64)>(
+        "SELECT id, username, is_admin FROM users WHERE id = ?",
+    )
+    .bind(stored.id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| ServerFnError::new("Authentication error"))?
+    .ok_or_else(|| ServerFnError::new("Not authenticated"))?;
+    Ok(UserSession {
+        id: current.0,
+        username: current.1,
+        is_admin: current.2 == 1,
+    })
 }
 
 #[cfg(feature = "ssr")]

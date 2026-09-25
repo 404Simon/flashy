@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct Project {
     pub id: i64,
     pub user_id: i64,
@@ -14,7 +14,7 @@ pub struct Project {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct ProjectSummary {
     pub id: i64,
     pub name: String,
@@ -24,7 +24,7 @@ pub struct ProjectSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct ProjectFile {
     pub id: i64,
     pub project_id: i64,

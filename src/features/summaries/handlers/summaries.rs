@@ -82,6 +82,20 @@ pub async fn create_summary(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("Project not found or access denied"))?;
 
+    if let Some(file_id) = file_id {
+        sqlx::query_scalar!(
+            r#"SELECT pf.id FROM project_files pf
+               JOIN study_projects sp ON sp.id = pf.project_id
+               WHERE pf.id = ? AND sp.user_id = ?"#,
+            file_id,
+            user.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("File not found or access denied"))?;
+    }
+
     let description = description
         .map(|d| d.trim().to_string())
         .filter(|d| !d.is_empty());
@@ -420,80 +434,38 @@ async fn call_llm_for_summary(prompt: &str) -> Result<GeneratedSummary, ServerFn
 pub async fn list_summaries_for_project(
     project_id: i64,
 ) -> Result<Vec<SummaryListItem>, ServerFnError> {
+    use crate::{
+        features::summaries::service::SummaryService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    sqlx::query!(
-        "SELECT id FROM study_projects WHERE id = ? AND user_id = ?",
-        project_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Project not found or access denied"))?;
-
-    let rows = sqlx::query!(
-        r#"SELECT
-            id as "id!: i64",
-            project_id as "project_id!: i64",
-            title as "title!: String",
-            CAST(COALESCE(description, '') AS TEXT) as "description!: String",
-            segment_label as "segment_label: String",
-            status as "status!: String",
-            created_at as "created_at!: String"
-        FROM summaries
-        WHERE project_id = ?
-        ORDER BY created_at DESC"#,
-        project_id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| SummaryListItem {
-            id: row.id,
-            project_id: row.project_id,
-            title: row.title,
-            description: if row.description.trim().is_empty() {
-                None
-            } else {
-                Some(row.description)
-            },
-            segment_label: row.segment_label,
-            status: row.status,
-            created_at: row.created_at,
-        })
-        .collect())
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    SummaryService::new(pool)
+        .list_all(&actor, project_id)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(GetSummary)]
 pub async fn get_summary(summary_id: i64) -> Result<Summary, ServerFnError> {
+    use crate::{
+        features::summaries::service::SummaryService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    let summary = sqlx::query_as!(
-        Summary,
-        r#"SELECT id, project_id, title, description, content_markdown, file_id, segment_label, status, error_message, created_at, updated_at
-        FROM summaries
-        WHERE id = ? AND project_id IN (
-            SELECT id FROM study_projects WHERE user_id = ?
-        )"#,
-        summary_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Summary not found or access denied"))?;
-
-    Ok(summary)
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    SummaryService::new(pool)
+        .get(&actor, summary_id)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(DeleteSummary)]

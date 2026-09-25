@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use leptos_router::hooks::{use_navigate, use_params_map};
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 use crate::features::auth::{
     handlers::{LoginUser, RegisterUser},
@@ -12,11 +12,35 @@ pub fn LoginPage() -> impl IntoView {
         expect_context::<LocalResource<Result<Option<UserSession>, ServerFnError>>>();
     let login_action = ServerAction::<LoginUser>::new();
     let navigate = use_navigate();
+    let query = use_query_map();
 
     Effect::new(move |_| {
         if let Some(Ok(_)) = login_action.value().get() {
             user_resource.refetch();
-            navigate("/", Default::default());
+            let target = query.with(|q| {
+                q.get("oauth_request")
+                    .filter(|id| {
+                        id.len() <= 128
+                            && id
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                    })
+                    .map(|id| format!("/oauth/consent/{id}"))
+                    .unwrap_or_else(|| "/".into())
+            });
+
+            // OAuth endpoints are served directly by Axum, outside the Leptos
+            // router. A client-side navigation would therefore render the app's
+            // 404 page instead of requesting the consent page from the server.
+            #[cfg(target_arch = "wasm32")]
+            if target.starts_with("/oauth/") {
+                if let Some(window) = web_sys::window() {
+                    let _ = window.location().set_href(&target);
+                    return;
+                }
+            }
+
+            navigate(&target, Default::default());
         }
     });
 

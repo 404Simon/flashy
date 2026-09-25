@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct FlashcardDeck {
     pub id: i64,
     pub project_id: i64,
@@ -14,7 +14,7 @@ pub struct FlashcardDeck {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct DeckSummary {
     pub id: i64,
     pub project_id: i64,
@@ -25,7 +25,7 @@ pub struct DeckSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "ssr", derive(FromRow))]
+#[cfg_attr(feature = "ssr", derive(FromRow, schemars::JsonSchema))]
 pub struct Flashcard {
     pub id: i64,
     pub deck_id: i64,

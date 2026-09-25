@@ -10,6 +10,11 @@ pub mod pages;
 pub mod validation;
 
 #[cfg(feature = "ssr")]
+pub mod mcp;
+#[cfg(feature = "ssr")]
+pub mod services;
+
+#[cfg(feature = "ssr")]
 pub mod session_store;
 
 #[cfg(feature = "hydrate")]

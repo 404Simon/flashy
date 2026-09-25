@@ -15,6 +15,7 @@ async fn main() {
         features::{
             auth::utils::ensure_admin_user,
             flashcards::handlers::anki_export::download_deck_as_anki,
+            oauth::{OAuthConfig, OAuthService},
             projects::handlers::{get_project_pdf, get_project_segment_pdf, upload_project_file},
             projects::storage::{MinioSettings, build_minio_client},
             summaries::handlers::pdf_export::download_summary_pdf,
@@ -42,6 +43,12 @@ async fn main() {
 
     // Load configuration from environment
     let config = Config::global();
+    let oauth_config = OAuthConfig::from_env().expect("FATAL: Invalid MCP/OAuth configuration");
+    if oauth_config.enabled
+        && std::env::var("ADMIN_PASSWORD").map_or(true, |value| value == "admin123")
+    {
+        panic!("FATAL: MCP_ENABLED requires a non-default ADMIN_PASSWORD");
+    }
     tracing::info!("Configuration loaded:");
     tracing::info!(
         "  Max upload size: {} MB",
@@ -100,6 +107,16 @@ async fn main() {
         minio_client,
         bucket_name: minio_settings.bucket.clone(),
         object_key_prefix: minio_settings.key_prefix.clone(),
+        oauth: OAuthService::new(pool.clone(), oauth_config),
+    };
+
+    let (oauth_router, mcp_router) = if app_state.oauth.config().enabled {
+        (
+            flashy::features::oauth::router(),
+            flashy::mcp::router(&app_state),
+        )
+    } else {
+        (Router::new(), Router::new())
     };
 
     let app = Router::new()
@@ -141,16 +158,38 @@ async fn main() {
             },
         )
         .fallback(leptos_axum::file_and_error_handler::<AppState, _>(shell))
+        .merge(oauth_router)
+        .merge(mcp_router)
         .layer(session_layer)
-        .with_state(app_state);
+        .with_state(app_state.clone());
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
     tracing::info!("Server listening on http://{}", &addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let cleanup_shutdown = shutdown.clone();
+    let oauth = app_state.oauth.clone();
+    let cleanup = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(900));
+        loop {
+            tokio::select! {
+                _ = cleanup_shutdown.cancelled() => break,
+                _ = interval.tick() => if let Err(error) = oauth.cleanup().await { tracing::warn!(?error, "OAuth cleanup failed"); },
+            }
+        }
+    });
+    let signal_shutdown = shutdown.clone();
     axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                signal_shutdown.cancel();
+            }
+        })
         .await
         .unwrap();
+    shutdown.cancel();
+    let _ = cleanup.await;
 }
 
 #[cfg(not(feature = "ssr"))]

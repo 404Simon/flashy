@@ -8,6 +8,7 @@ AI-powered flashcard generator for study materials. Upload PDFs, generate flashc
 - Markdown formatting with LaTeX math support (MathJax)
 - Anki export (.apkg format)
 - Invite-only user registration
+- Read-only MCP access with embedded OAuth authorization
 - SQLite database with migrations
 
 ## Setup
@@ -37,6 +38,13 @@ sqlx migrate run
 ```bash
 cargo leptos watch
 ```
+
+## MCP
+
+Flashy can expose projects, extracted document text, decks, flashcards, and
+summaries to Codex and OpenCode through a read-only MCP server. See
+[docs/mcp.md](docs/mcp.md) for deployment, client setup, scope, and revocation
+details.
 
 ## LLM Configuration
 

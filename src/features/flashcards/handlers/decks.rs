@@ -72,86 +72,37 @@ pub async fn create_deck(
 
 #[server(ListDecksForProject)]
 pub async fn list_decks_for_project(project_id: i64) -> Result<Vec<DeckSummary>, ServerFnError> {
+    use crate::{
+        features::flashcards::service::FlashcardService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
-
-    // Verify user owns the project
-    sqlx::query!(
-        "SELECT id FROM study_projects WHERE id = ? AND user_id = ?",
-        project_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Project not found or access denied"))?;
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            fd.id as "id!: i64",
-            fd.project_id as "project_id!: i64",
-            fd.name as "name!: String",
-            CAST(COALESCE(fd.description, '') AS TEXT) as "description!: String",
-            fd.created_at as "created_at!: String",
-            CAST(COALESCE((
-                SELECT COUNT(*)
-                FROM flashcards f
-                WHERE f.deck_id = fd.id
-            ), 0) AS INTEGER) as "card_count!: i64"
-        FROM flashcard_decks fd
-        WHERE fd.project_id = ?
-        ORDER BY fd.created_at DESC
-        "#,
-        project_id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| DeckSummary {
-            id: row.id,
-            project_id: row.project_id,
-            name: row.name,
-            description: if row.description.trim().is_empty() {
-                None
-            } else {
-                Some(row.description)
-            },
-            created_at: row.created_at,
-            card_count: row.card_count,
-        })
-        .collect())
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    FlashcardService::new(pool)
+        .list_decks_all(&actor, project_id)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(GetDeck)]
 pub async fn get_deck(deck_id: i64) -> Result<FlashcardDeck, ServerFnError> {
+    use crate::{
+        features::flashcards::service::FlashcardService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    let deck = sqlx::query_as!(
-        FlashcardDeck,
-        r#"
-        SELECT fd.id as "id!", fd.project_id as "project_id!", fd.name, fd.description, fd.created_at, fd.updated_at
-        FROM flashcard_decks fd
-        INNER JOIN study_projects sp ON fd.project_id = sp.id
-        WHERE fd.id = ? AND sp.user_id = ?
-        "#,
-        deck_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
-
-    Ok(deck)
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    FlashcardService::new(pool)
+        .get_deck(&actor, deck_id)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(UpdateDeck)]
@@ -304,43 +255,20 @@ pub async fn list_flashcards_by_file(
     deck_id: i64,
     file_id: i64,
 ) -> Result<Vec<Flashcard>, ServerFnError> {
+    use crate::{
+        features::flashcards::service::FlashcardService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    // Verify user owns the deck
-    sqlx::query!(
-        r#"
-        SELECT fd.id
-        FROM flashcard_decks fd
-        INNER JOIN study_projects sp ON fd.project_id = sp.id
-        WHERE fd.id = ? AND sp.user_id = ?
-        "#,
-        deck_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
-
-    let cards = sqlx::query_as!(
-        Flashcard,
-        r#"
-        SELECT id as "id!", deck_id as "deck_id!", front, back, document_reference, file_id, created_at, updated_at
-        FROM flashcards
-        WHERE deck_id = ? AND file_id = ?
-        ORDER BY created_at ASC
-        "#,
-        deck_id,
-        file_id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(cards)
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    FlashcardService::new(pool)
+        .list_cards_all(&actor, deck_id, Some(file_id))
+        .await
+        .map_err(to_server_error)
 }
 
 // ============= FLASHCARD OPERATIONS =============
@@ -378,6 +306,20 @@ pub async fn create_flashcard(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
 
+    if let Some(file_id) = card.file_id {
+        sqlx::query_scalar!(
+            r#"SELECT pf.id FROM project_files pf
+               JOIN study_projects sp ON sp.id = pf.project_id
+               WHERE pf.id = ? AND sp.user_id = ?"#,
+            file_id,
+            user.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("File not found or access denied"))?;
+    }
+
     let result = sqlx::query!(
         "INSERT INTO flashcards (deck_id, front, back, document_reference, file_id) VALUES (?, ?, ?, ?, ?)",
         deck_id,
@@ -410,42 +352,20 @@ pub async fn create_flashcard(
 
 #[server(ListFlashcards)]
 pub async fn list_flashcards(deck_id: i64) -> Result<Vec<Flashcard>, ServerFnError> {
+    use crate::{
+        features::flashcards::service::FlashcardService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    // Verify user owns the deck
-    sqlx::query!(
-        r#"
-        SELECT fd.id
-        FROM flashcard_decks fd
-        INNER JOIN study_projects sp ON fd.project_id = sp.id
-        WHERE fd.id = ? AND sp.user_id = ?
-        "#,
-        deck_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Deck not found or access denied"))?;
-
-    let cards = sqlx::query_as!(
-        Flashcard,
-        r#"
-        SELECT id as "id!", deck_id as "deck_id!", front, back, document_reference, file_id, created_at, updated_at
-        FROM flashcards
-        WHERE deck_id = ?
-        ORDER BY created_at ASC
-        "#,
-        deck_id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(cards)
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    FlashcardService::new(pool)
+        .list_cards_all(&actor, deck_id, None)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(UpdateFlashcard)]

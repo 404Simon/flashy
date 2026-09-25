@@ -56,70 +56,35 @@ pub async fn create_project(
 
 #[server(ListProjects)]
 pub async fn list_projects() -> Result<Vec<ProjectSummary>, ServerFnError> {
+    use crate::{
+        features::projects::service::ProjectService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            sp.id as "id!: i64",
-            sp.name as "name!: String",
-            CAST(COALESCE(sp.description, '') AS TEXT) as "description!: String",
-            sp.created_at as "created_at!: String",
-            CAST(COALESCE((
-                SELECT COUNT(*)
-                FROM project_files pf
-                WHERE pf.project_id = sp.id
-            ), 0) AS INTEGER) as "file_count!: i64"
-        FROM study_projects sp
-        WHERE sp.user_id = ?
-        ORDER BY sp.created_at DESC
-        "#,
-        user.id
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| ProjectSummary {
-            id: row.id,
-            name: row.name,
-            description: if row.description.trim().is_empty() {
-                None
-            } else {
-                Some(row.description)
-            },
-            created_at: row.created_at,
-            file_count: row.file_count,
-        })
-        .collect())
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    ProjectService::new(pool)
+        .list_all(&actor)
+        .await
+        .map_err(to_server_error)
 }
 
 #[server(GetProject)]
 pub async fn get_project(project_id: i64) -> Result<Project, ServerFnError> {
+    use crate::{
+        features::projects::service::ProjectService,
+        services::{Actor, to_server_error},
+    };
     use sqlx::SqlitePool;
 
     let user = require_auth().await?;
     let pool = expect_context::<SqlitePool>();
 
-    let project = sqlx::query_as!(
-        Project,
-        r#"
-        SELECT id, user_id, name, description, created_at, updated_at
-        FROM study_projects
-        WHERE id = ? AND user_id = ?
-        "#,
-        project_id,
-        user.id
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("Project not found"))?;
-
-    Ok(project)
+    let actor = Actor::new(user.id).map_err(to_server_error)?;
+    ProjectService::new(pool)
+        .get(&actor, project_id)
+        .await
+        .map_err(to_server_error)
 }

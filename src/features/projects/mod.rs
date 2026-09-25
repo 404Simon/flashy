@@ -1,6 +1,10 @@
+#[cfg(feature = "ssr")]
+pub mod files_service;
 pub mod handlers;
 pub mod models;
 pub mod processing;
+#[cfg(feature = "ssr")]
+pub mod service;
 pub mod storage;
 
 pub use handlers::{

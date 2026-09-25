@@ -1,4 +1,6 @@
 #[cfg(feature = "ssr")]
+use crate::features::oauth::OAuthService;
+#[cfg(feature = "ssr")]
 use aws_sdk_s3::Client;
 #[cfg(feature = "ssr")]
 use axum::extract::FromRef;
@@ -15,6 +17,7 @@ pub struct AppState {
     pub minio_client: Client,
     pub bucket_name: String,
     pub object_key_prefix: String,
+    pub oauth: OAuthService,
 }
 
 #[cfg(feature = "ssr")]

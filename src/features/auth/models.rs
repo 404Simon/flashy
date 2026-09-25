@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "ssr")]
 use sqlx::FromRow;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ssr", derive(FromRow))]
 pub struct User {
     pub id: i64,
@@ -19,4 +19,11 @@ pub struct UserSession {
     pub id: i64,
     pub username: String,
     pub is_admin: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectedApplication {
+    pub client_id: String,
+    pub display_name: String,
+    pub authorized_at: i64,
 }
