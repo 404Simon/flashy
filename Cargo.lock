@@ -1588,7 +1588,7 @@ dependencies = [
  "console_error_panic_hook",
  "dotenvy",
  "futures-util",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "gloo-timers",
  "js-sys",
  "leptos",
