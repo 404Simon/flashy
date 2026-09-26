@@ -1583,7 +1583,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-s3",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "bcrypt",
  "console_error_panic_hook",
  "dotenvy",
