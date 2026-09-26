@@ -1,57 +1,69 @@
-# Flashy MCP setup
+# Flashy MCP
 
-Flashy exposes a read-only MCP server at `/mcp`. Authorization uses an existing
-Flashy account and an explicit browser consent screen. The `flashy:read` scope
-includes project metadata, filenames, extracted document text, decks,
-flashcards, and summaries belonging to that account. It cannot modify study
-data or access another account.
+Flashy's read-only MCP server lets AI clients access the projects, documents,
+summaries, decks, and flashcards in your account. It cannot change your data.
 
-The public registration and authorization endpoints use durable per-peer and
-global rate limits. Deploy an additional reverse-proxy rate limit for
-internet-facing installations; Flashy deliberately keys its internal limit to
-the direct TCP peer and does not trust spoofable forwarding headers.
+## Connect with Codex
 
-## Server configuration
+Add the hosted Flashy server and start the login flow:
 
-Set these environment variables in production:
+```bash
+codex mcp add flashy --url https://<your-domain>/mcp
+codex mcp login flashy
+```
+
+The login command opens Flashy in your browser. Sign in with your existing
+account, review the requested access, and choose **Allow**.
+
+## Connect with OpenCode
+
+Let OpenCode add the server, then start the login flow:
+
+```bash
+opencode mcp add flashy --url https://<your-domain>/mcp
+opencode mcp auth flashy
+```
+
+Alternatively, add the server to your OpenCode configuration:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "flashy": {
+      "type": "remote",
+      "url": "https://<your-domain>/mcp"
+    }
+  }
+}
+```
+
+Then run `opencode mcp auth flashy`. The auth command opens the same browser
+login and consent flow.
+
+To revoke access later, open **Settings → Connected applications** in Flashy
+and choose **Disconnect**. Changing your password also revokes all connected
+applications; logging out in the browser does not.
+
+## Self-hosting
+
+Enable MCP and set the public URL for your Flashy instance:
 
 ```dotenv
 MCP_ENABLED=true
-FLASHY_PUBLIC_ORIGIN=https://flashy.example
+FLASHY_PUBLIC_ORIGIN=https://<your-domain>
 SESSION_SECURE=true
-ADMIN_PASSWORD=a-strong-non-default-password
 ```
 
-`FLASHY_PUBLIC_ORIGIN` is the canonical issuer. It must be HTTPS except for an
-explicit loopback development origin. Changing it changes the OAuth audience,
-so connected clients must authorize again. `MCP_CIMD_TRUSTED_HOSTS` can add a
-comma-separated set of HTTPS hosts whose client metadata Flashy may retrieve;
-`chatgpt.com` is trusted by default.
+Then replace the hosted URL in the Codex or OpenCode setup with
+`https://<your-domain>/mcp`. Public instances must use HTTPS. Changing
+`FLASHY_PUBLIC_ORIGIN` requires connected clients to log in again.
 
-Run the database migrations before exposing the endpoint. Flashy never stores
-authorization codes, access tokens, or refresh tokens in plaintext.
-
-## Clients
-
-Use this server URL in Codex or OpenCode v1:
-
-```text
-https://flashy.example/mcp
-```
-
-The client discovers OAuth metadata and opens a browser. Log in with an
-existing Flashy account, review the requested access, and choose **Allow**.
-OpenCode v1 can use dynamic client registration. Codex can use its published
-client metadata; forced DCR is also supported. OpenCode v2 has not been
-acceptance-tested.
-
-To disconnect a client, open **Settings → Connected applications** and choose
-**Disconnect**. Changing the account password also revokes every OAuth grant.
-Ordinary browser logout does not disconnect CLI clients.
+Run the database migrations before exposing the endpoint, and add a
+reverse-proxy rate limit for internet-facing installations.
 
 ## Limits
 
-Lists default to 25 records and accept at most 100. Document and summary reads
-default to 8,000 Unicode characters and accept at most 20,000. Cursors are
-opaque and tied to their collection or filter. If document content changes,
-restart chunked reading without the old cursor.
+List tools return 25 records by default and at most 100. Document and summary
+reads return 8,000 Unicode characters by default and at most 20,000. Follow the
+returned cursor to read additional records or content.

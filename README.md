@@ -43,8 +43,7 @@ cargo leptos watch
 
 Flashy can expose projects, extracted document text, decks, flashcards, and
 summaries to Codex and OpenCode through a read-only MCP server. See
-[docs/mcp.md](docs/mcp.md) for deployment, client setup, scope, and revocation
-details.
+[docs/mcp.md](docs/mcp.md) for client setup and self-hosting details.
 
 ## LLM Configuration
 
