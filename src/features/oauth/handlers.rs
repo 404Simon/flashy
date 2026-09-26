@@ -1,6 +1,6 @@
 use axum::{
     Form, Json, Router,
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -17,6 +17,8 @@ use super::{
     service::OAuthError,
 };
 use crate::{app_state::AppState, features::auth::models::UserSession};
+
+const BINDING_COOKIE: &str = "flashy_oauth_binding";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -62,9 +64,10 @@ async fn resource_metadata(State(state): State<AppState>) -> Json<serde_json::Va
 
 async fn register(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     Json(request): Json<RegistrationRequest>,
 ) -> Response {
-    match state.oauth.register(request).await {
+    match state.oauth.register(request, &peer.ip().to_string()).await {
         Ok(client) => (StatusCode::CREATED, Json(client)).into_response(),
         Err(e) => oauth_error(e).into_response(),
     }
@@ -72,18 +75,30 @@ async fn register(
 
 async fn authorize(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
     session: Session,
     Query(q): Query<AuthorizationQuery>,
 ) -> Response {
     if q.response_type != "code" || q.code_challenge_method != "S256" {
         return local_error("Unsupported authorization request");
     }
+    if let Err(error) = state
+        .oauth
+        .check_authorization_rate(&peer.ip().to_string())
+        .await
+    {
+        return local_oauth_error(error);
+    }
     if let Err(error) = state.oauth.resolve_client(&q.client_id).await {
         return local_oauth_error(error);
     }
-    let binding = match browser_binding(&session).await {
-        Ok(value) => value,
-        Err(_) => return local_error("Could not create browser session"),
+    let (binding, set_binding_cookie) = match browser_binding(&headers) {
+        Some(value) => (value, false),
+        None => match random_value() {
+            Ok(value) => (value, true),
+            Err(_) => return local_error("Could not create browser session"),
+        },
     };
     let request_id = match state
         .oauth
@@ -112,11 +127,16 @@ async fn authorize(
     } else {
         format!("/login?oauth_request={request_id}")
     };
-    Redirect::to(&target).into_response()
+    let mut response = Redirect::to(&target).into_response();
+    if set_binding_cookie {
+        set_browser_binding_cookie(&mut response, &binding, state.oauth.config().secure_cookie);
+    }
+    response
 }
 
 async fn consent_page(
     State(state): State<AppState>,
+    headers: HeaderMap,
     session: Session,
     axum::extract::Path(request_id): axum::extract::Path<String>,
 ) -> Response {
@@ -133,9 +153,9 @@ async fn consent_page(
     if !exists {
         return local_error("Your account is no longer available");
     }
-    let binding = match browser_binding(&session).await {
-        Ok(value) => value,
-        Err(_) => return local_error("Invalid browser session"),
+    let binding = match browser_binding(&headers) {
+        Some(value) => value,
+        None => return local_error("Invalid browser session"),
     };
     let pending = match state.oauth.pending(&request_id, &binding).await {
         Ok(value) => value,
@@ -183,15 +203,16 @@ async fn consent_page(
 
 async fn consent(
     State(state): State<AppState>,
+    headers: HeaderMap,
     session: Session,
     Form(form): Form<ConsentForm>,
 ) -> Response {
     let Some(user) = session.get::<UserSession>("user").await.ok().flatten() else {
         return local_error("Login required");
     };
-    let binding = match browser_binding(&session).await {
-        Ok(value) => value,
-        Err(_) => return local_error("Invalid browser session"),
+    let binding = match browser_binding(&headers) {
+        Some(value) => value,
+        None => return local_error("Invalid browser session"),
     };
     if consent_token(&form.request_id, &binding) != form.csrf_token {
         return local_error("Invalid consent submission");
@@ -248,10 +269,15 @@ fn oauth_error(error: OAuthError) -> (StatusCode, HeaderMap, Json<serde_json::Va
         OAuthError::InvalidScope => (StatusCode::BAD_REQUEST, "invalid_scope"),
         OAuthError::InvalidTarget => (StatusCode::BAD_REQUEST, "invalid_target"),
         OAuthError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable"),
+        OAuthError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "temporarily_unavailable"),
         OAuthError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "server_error"),
         OAuthError::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_request"),
     };
-    (status, no_store_headers(), Json(json!({"error":code})))
+    let mut headers = no_store_headers();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        headers.insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+    }
+    (status, headers, Json(json!({"error":code})))
 }
 
 fn local_oauth_error(error: OAuthError) -> Response {
@@ -260,6 +286,7 @@ fn local_oauth_error(error: OAuthError) -> Response {
         OAuthError::InvalidScope => "Unsupported scope",
         OAuthError::InvalidTarget => "Invalid resource",
         OAuthError::Unavailable => "Authorization service temporarily unavailable",
+        OAuthError::RateLimited => "Too many authorization requests; try again shortly",
         _ => "Invalid authorization request",
     })
 }
@@ -315,16 +342,36 @@ fn no_store_headers() -> HeaderMap {
     headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
     headers
 }
-async fn browser_binding(session: &Session) -> Result<String, ()> {
-    if let Some(value) = session.get("oauth_browser_binding").await.map_err(|_| ())? {
-        return Ok(value);
+fn browser_binding(headers: &HeaderMap) -> Option<String> {
+    for header_value in headers.get_all(header::COOKIE) {
+        let Ok(cookies) = header_value.to_str() else {
+            continue;
+        };
+        for cookie in cookies.split(';').map(str::trim) {
+            let Some((name, value)) = cookie.split_once('=') else {
+                continue;
+            };
+            if name == BINDING_COOKIE
+                && value.len() == 43
+                && URL_SAFE_NO_PAD
+                    .decode(value)
+                    .is_ok_and(|decoded| decoded.len() == 32)
+            {
+                return Some(value.to_owned());
+            }
+        }
     }
-    let value = random_value()?;
-    session
-        .insert("oauth_browser_binding", &value)
-        .await
-        .map_err(|_| ())?;
-    Ok(value)
+    None
+}
+fn set_browser_binding_cookie(response: &mut Response, value: &str, secure: bool) {
+    let secure = if secure { "; Secure" } else { "" };
+    let cookie = format!(
+        "{BINDING_COOKIE}={value}; HttpOnly; SameSite=Lax; Path=/oauth; Max-Age=600{secure}"
+    );
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).expect("base64url cookie value is a valid header"),
+    );
 }
 fn random_value() -> Result<String, ()> {
     let mut bytes = [0u8; 32];
@@ -353,7 +400,15 @@ fn _assert_json<T: Serialize>() {}
 
 #[cfg(test)]
 mod tests {
-    use super::{consent_token, form_action_origin};
+    use super::{
+        BINDING_COOKIE, browser_binding, consent_token, form_action_origin,
+        set_browser_binding_cookie,
+    };
+    use axum::{
+        http::{HeaderMap, HeaderValue, header},
+        response::IntoResponse,
+    };
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     #[test]
     fn consent_token_is_bound_to_request_and_browser_session() {
@@ -387,5 +442,31 @@ mod tests {
         assert_eq!(form_action_origin("data:text/html,hi"), None);
         assert_eq!(form_action_origin("ftp://example.com/cb"), None);
         assert_eq!(form_action_origin("/oauth/consent"), None);
+    }
+
+    #[test]
+    fn browser_binding_cookie_is_short_lived_and_hardened() {
+        let binding = URL_SAFE_NO_PAD.encode([1_u8; 32]);
+        let mut response = ().into_response();
+        set_browser_binding_cookie(&mut response, &binding, true);
+        let set_cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(set_cookie.starts_with(&format!("{BINDING_COOKIE}={binding}")));
+        assert!(set_cookie.contains("HttpOnly"));
+        assert!(set_cookie.contains("Secure"));
+        assert!(set_cookie.contains("SameSite=Lax"));
+        assert!(set_cookie.contains("Path=/oauth"));
+        assert!(set_cookie.contains("Max-Age=600"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!("unrelated=x; {BINDING_COOKIE}={binding}")).unwrap(),
+        );
+        assert_eq!(browser_binding(&headers).as_deref(), Some(binding.as_str()));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("flashy_oauth_binding=invalid"),
+        );
+        assert!(browser_binding(&headers).is_none());
     }
 }

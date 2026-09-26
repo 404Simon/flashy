@@ -22,9 +22,19 @@ pub async fn require_bearer(
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(bearer_token);
     let Some(token) = token else {
         return unauthorized(&state);
+    };
+    let permit = match tokio::time::timeout(
+        Duration::from_secs(2),
+        concurrency_limit().clone().acquire_owned(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(_) => return (StatusCode::TOO_MANY_REQUESTS, "MCP server is busy").into_response(),
     };
     let principal: McpPrincipal = match state.oauth.authenticate(token).await {
         Ok(value) => value,
@@ -35,16 +45,21 @@ pub async fn require_bearer(
     }
     tracing::debug!(user_id=principal.user_id, client_id=%principal.client_id, grant_id=%principal.grant_id, "authenticated MCP request");
     request.extensions_mut().insert(principal);
-    let permit = match concurrency_limit().clone().acquire_owned().await {
-        Ok(permit) => permit,
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    };
     let response = tokio::time::timeout(Duration::from_secs(30), next.run(request)).await;
     drop(permit);
-    match response {
+    let mut response = match response {
         Ok(response) => response,
         Err(_) => (StatusCode::GATEWAY_TIMEOUT, "MCP request timed out").into_response(),
-    }
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn bearer_token(value: &str) -> Option<&str> {
+    let (scheme, token) = value.split_once(' ')?;
+    (!token.is_empty() && scheme.eq_ignore_ascii_case("Bearer")).then_some(token)
 }
 
 fn concurrency_limit() -> &'static Arc<tokio::sync::Semaphore> {
@@ -82,4 +97,18 @@ fn unauthorized(state: &AppState) -> Response {
             .insert(header::WWW_AUTHENTICATE, value);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bearer_token;
+
+    #[test]
+    fn bearer_scheme_is_case_insensitive() {
+        assert_eq!(bearer_token("Bearer token"), Some("token"));
+        assert_eq!(bearer_token("bearer token"), Some("token"));
+        assert_eq!(bearer_token("BEARER token"), Some("token"));
+        assert_eq!(bearer_token("Basic token"), None);
+        assert_eq!(bearer_token("Bearer "), None);
+    }
 }

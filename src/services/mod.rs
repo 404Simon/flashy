@@ -224,4 +224,52 @@ mod isolation_tests {
             Err(ServiceError::NotFound)
         ));
     }
+
+    #[tokio::test]
+    async fn project_pagination_preserves_created_at_order_with_id_tiebreaker() {
+        let pool = fixture().await;
+        sqlx::query("INSERT INTO study_projects VALUES (5,1,'Newest',NULL,'2027','2027'), (30,1,'Oldest',NULL,'2025','2025')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let service = ProjectService::new(pool);
+        let actor = Actor::new(1).unwrap();
+        let first = service
+            .list(
+                &actor,
+                PageRequest {
+                    cursor: None,
+                    limit: Some(2),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>(),
+            [5, 10]
+        );
+        let second = service
+            .list(
+                &actor,
+                PageRequest {
+                    cursor: first.next_cursor,
+                    limit: Some(2),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            second
+                .items
+                .iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>(),
+            [30]
+        );
+        assert!(second.next_cursor.is_none());
+    }
 }

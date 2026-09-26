@@ -23,6 +23,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .with_allowed_hosts([host, "localhost".into(), "127.0.0.1".into(), "::1".into()])
         .enforce_origin_validation()
         .with_max_request_body_bytes(64 * 1024)
+        .with_json_response(true)
         .with_legacy_session_mode(false);
     let pool = state.db_pool.clone();
     let service: StreamableHttpService<FlashyMcpServer, LocalSessionManager> =

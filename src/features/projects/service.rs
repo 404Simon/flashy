@@ -14,7 +14,9 @@ pub struct ProjectService {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ProjectCursor {
+    before_created_at: String,
     before_id: i64,
 }
 
@@ -34,15 +36,18 @@ impl ProjectService {
     ) -> Result<Page<ProjectSummary>, ServiceError> {
         let limit = page.limit()?;
         let cursor: Option<ProjectCursor> = decode_cursor(page.cursor.as_deref())?;
-        let mut items = self
-            .query(actor, cursor.map(|c| c.before_id), Some(limit + 1))
-            .await?;
+        let mut items = self.query(actor, cursor, Some(limit + 1)).await?;
         let has_more = items.len() > limit as usize;
         items.truncate(limit as usize);
         let next_cursor = if has_more {
             items
                 .last()
-                .map(|item| encode_cursor(&ProjectCursor { before_id: item.id }))
+                .map(|item| {
+                    encode_cursor(&ProjectCursor {
+                        before_created_at: item.created_at.clone(),
+                        before_id: item.id,
+                    })
+                })
                 .transpose()?
         } else {
             None
@@ -53,7 +58,7 @@ impl ProjectService {
     async fn query(
         &self,
         actor: &Actor,
-        before_id: Option<i64>,
+        before: Option<ProjectCursor>,
         limit: Option<u32>,
     ) -> Result<Vec<ProjectSummary>, ServiceError> {
         let rows = sqlx::query_as::<_, ProjectSummary>(
@@ -61,14 +66,29 @@ impl ProjectService {
                 CAST(COUNT(pf.id) AS INTEGER) AS file_count
                FROM study_projects sp
                LEFT JOIN project_files pf ON pf.project_id = sp.id
-               WHERE sp.user_id = ? AND (? IS NULL OR sp.id < ?)
+               WHERE sp.user_id = ?
+                 AND (? IS NULL OR sp.created_at < ? OR (sp.created_at = ? AND sp.id < ?))
                GROUP BY sp.id
-               ORDER BY sp.id DESC
+               ORDER BY sp.created_at DESC, sp.id DESC
                LIMIT COALESCE(?, -1)"#,
         )
         .bind(actor.user_id())
-        .bind(before_id)
-        .bind(before_id)
+        .bind(
+            before
+                .as_ref()
+                .map(|cursor| cursor.before_created_at.as_str()),
+        )
+        .bind(
+            before
+                .as_ref()
+                .map(|cursor| cursor.before_created_at.as_str()),
+        )
+        .bind(
+            before
+                .as_ref()
+                .map(|cursor| cursor.before_created_at.as_str()),
+        )
+        .bind(before.as_ref().map(|cursor| cursor.before_id))
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;

@@ -6,6 +6,7 @@ pub struct OAuthConfig {
     pub enabled: bool,
     pub issuer: Url,
     pub resource: String,
+    pub secure_cookie: bool,
     pub trusted_metadata_hosts: HashSet<String>,
 }
 
@@ -19,6 +20,8 @@ impl OAuthConfig {
             Url::parse(&raw).map_err(|_| "FLASHY_PUBLIC_ORIGIN must be an absolute URL")?;
         if issuer.cannot_be_a_base()
             || issuer.host_str().is_none()
+            || !issuer.username().is_empty()
+            || issuer.password().is_some()
             || issuer.query().is_some()
             || issuer.fragment().is_some()
         {
@@ -28,6 +31,9 @@ impl OAuthConfig {
         }
         if issuer.path() != "/" {
             return Err("FLASHY_PUBLIC_ORIGIN must not contain a path".into());
+        }
+        if !matches!(issuer.scheme(), "http" | "https") {
+            return Err("FLASHY_PUBLIC_ORIGIN must use HTTP or HTTPS".into());
         }
         let loopback = issuer.host_str().is_some_and(|h| {
             h == "localhost"
@@ -51,18 +57,35 @@ impl OAuthConfig {
         let resource = issuer.join("mcp").expect("valid resource URL").to_string();
         let mut trusted_metadata_hosts = HashSet::from(["chatgpt.com".to_owned()]);
         if let Ok(hosts) = std::env::var("MCP_CIMD_TRUSTED_HOSTS") {
-            trusted_metadata_hosts.extend(
-                hosts
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned),
-            );
+            for raw_host in hosts
+                .split(',')
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+            {
+                let candidate = Url::parse(&format!("https://{raw_host}/"))
+                    .map_err(|_| "MCP_CIMD_TRUSTED_HOSTS must contain hostnames only")?;
+                if candidate.port().is_some()
+                    || !candidate.username().is_empty()
+                    || candidate.password().is_some()
+                    || candidate.path() != "/"
+                    || candidate.query().is_some()
+                    || candidate.fragment().is_some()
+                {
+                    return Err("MCP_CIMD_TRUSTED_HOSTS must contain hostnames only".into());
+                }
+                trusted_metadata_hosts.insert(
+                    candidate
+                        .host_str()
+                        .ok_or("MCP_CIMD_TRUSTED_HOSTS contains an invalid hostname")?
+                        .to_owned(),
+                );
+            }
         }
         Ok(Self {
             enabled,
             issuer,
             resource,
+            secure_cookie,
             trusted_metadata_hosts,
         })
     }

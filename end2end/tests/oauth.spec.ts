@@ -12,9 +12,12 @@ test("OAuth login, consent, callback, and token exchange", async ({
   request,
 }) => {
   test.skip(
-    !username || !password,
+    (!username || !password) && !process.env.CI,
     "Set MCP_E2E_USERNAME and MCP_E2E_PASSWORD to run the OAuth flow",
   );
+  if (!username || !password) {
+    throw new Error("CI must provide MCP_E2E_USERNAME and MCP_E2E_PASSWORD");
+  }
 
   let resolveCallback!: (url: URL) => void;
   const callbackReceived = new Promise<URL>((resolve) => {
@@ -102,10 +105,35 @@ test("OAuth login, consent, callback, and token exchange", async ({
       },
     });
     expect(tokenResponse.status()).toBe(200);
-    await expect(tokenResponse.json()).resolves.toMatchObject({
+    const tokens = await tokenResponse.json();
+    expect(tokens).toMatchObject({
       token_type: "Bearer",
       scope: "flashy:read",
     });
+
+    const mcpResponse = await request.post(`${baseUrl}/mcp`, {
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-protocol-version": "2026-07-28",
+      },
+      data: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+      },
+    });
+    expect(mcpResponse.status()).toBe(200);
+    const mcpPayload = await mcpResponse.json();
+    expect(mcpPayload.result.tools.map((tool: { name: string }) => tool.name))
+      .toEqual(expect.arrayContaining(["list_projects", "get_file_text"]));
   } finally {
     await new Promise<void>((resolve, reject) => {
       callbackServer.close((error) => (error ? reject(error) : resolve()));

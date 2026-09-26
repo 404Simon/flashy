@@ -1,16 +1,13 @@
-use std::{net::IpAddr, time::Duration};
-
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use getrandom::fill;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use time::OffsetDateTime;
-use url::Url;
 
 use super::{
+    client,
     config::OAuthConfig,
-    engine::{encode_s256_challenge, verify_s256},
+    engine::{validate_s256_challenge, verify_s256},
     models::{
         McpPrincipal, READ_SCOPE, RegistrationRequest, RegistrationResponse, TokenForm,
         TokenResponse,
@@ -23,6 +20,10 @@ const CODE_TTL: i64 = 60;
 const ACCESS_TTL: i64 = 900;
 const REFRESH_IDLE_TTL: i64 = 7 * 86_400;
 const GRANT_TTL: i64 = 30 * 86_400;
+const REGISTER_PEER_LIMIT: i64 = 10;
+const REGISTER_GLOBAL_LIMIT: i64 = 60;
+const AUTHORIZE_PEER_LIMIT: i64 = 60;
+const AUTHORIZE_GLOBAL_LIMIT: i64 = 300;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OAuthError {
@@ -38,6 +39,8 @@ pub enum OAuthError {
     InvalidTarget,
     #[error("temporarily_unavailable")]
     Unavailable,
+    #[error("rate_limited")]
+    RateLimited,
     #[error("server_error")]
     Internal(#[source] sqlx::Error),
 }
@@ -74,161 +77,32 @@ impl OAuthService {
     pub async fn register(
         &self,
         request: RegistrationRequest,
+        source: &str,
     ) -> Result<RegistrationResponse, OAuthError> {
-        let name = request.client_name.trim();
-        if name.is_empty()
-            || name.len() > 120
-            || request.redirect_uris.is_empty()
-            || request.redirect_uris.len() > 5
-        {
-            return Err(OAuthError::InvalidRequest);
-        }
-        if request
-            .token_endpoint_auth_method
-            .as_deref()
-            .is_some_and(|m| m != "none")
-            || (!request.grant_types.is_empty()
-                && request
-                    .grant_types
-                    .iter()
-                    .any(|g| g != "authorization_code" && g != "refresh_token"))
-            || (!request.response_types.is_empty()
-                && request.response_types.iter().any(|r| r != "code"))
-        {
-            return Err(OAuthError::InvalidRequest);
-        }
-        for uri in &request.redirect_uris {
-            validate_native_redirect(uri)?;
-        }
-        let client_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients")
-            .fetch_one(&self.pool)
-            .await?;
-        if client_count >= 10_000 {
-            return Err(OAuthError::Unavailable);
-        }
-        let recent_registrations: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM oauth_clients WHERE registration_source = 'dcr' AND created_at > ?",
+        super::rate_limit::enforce(
+            &self.pool,
+            "register",
+            source,
+            REGISTER_PEER_LIMIT,
+            REGISTER_GLOBAL_LIMIT,
         )
-        .bind(now() - 60)
-        .fetch_one(&self.pool)
         .await?;
-        if recent_registrations >= 60 {
-            return Err(OAuthError::Unavailable);
-        }
-        let client_id = random_credential()?;
-        let now = now();
-        sqlx::query("INSERT INTO oauth_clients (client_id, registration_source, display_name, redirect_uris, created_at) VALUES (?, 'dcr', ?, ?, ?)")
-            .bind(&client_id).bind(name).bind(serde_json::to_string(&request.redirect_uris).map_err(|_| OAuthError::InvalidRequest)?).bind(now).execute(&self.pool).await?;
-        Ok(RegistrationResponse {
-            client_id,
-            client_name: name.to_owned(),
-            redirect_uris: request.redirect_uris,
-            token_endpoint_auth_method: "none",
-            grant_types: ["authorization_code", "refresh_token"],
-            response_types: ["code"],
-        })
+        client::register(&self.pool, request).await
     }
 
     pub async fn resolve_client(&self, client_id: &str) -> Result<(), OAuthError> {
-        if sqlx::query_as::<_, (String, Option<i64>)>(
-            "SELECT registration_source, metadata_expires_at FROM oauth_clients WHERE client_id = ?",
-        )
-            .bind(client_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .is_some_and(|(source, expiry)| source != "cimd" || expiry.is_some_and(|value| value > now()))
-        {
-            return Ok(());
-        }
-        self.resolve_cimd(client_id).await
+        client::resolve(&self.pool, &self.config, client_id).await
     }
 
-    async fn resolve_cimd(&self, client_id: &str) -> Result<(), OAuthError> {
-        #[derive(Deserialize)]
-        struct Metadata {
-            client_id: String,
-            client_name: String,
-            redirect_uris: Vec<String>,
-            token_endpoint_auth_method: Option<String>,
-        }
-        let url = Url::parse(client_id).map_err(|_| OAuthError::InvalidClient)?;
-        let host = url.host_str().ok_or(OAuthError::InvalidClient)?;
-        if url.scheme() != "https"
-            || !self.config.trusted_metadata_hosts.contains(host)
-            || url.fragment().is_some()
-            || url.username() != ""
-            || url.password().is_some()
-        {
-            return Err(OAuthError::InvalidClient);
-        }
-        let port = url
-            .port_or_known_default()
-            .ok_or(OAuthError::InvalidClient)?;
-        let addresses: Vec<_> = tokio::net::lookup_host((host, port))
-            .await
-            .map_err(|_| OAuthError::Unavailable)?
-            .filter(|a| is_public(a.ip()))
-            .collect();
-        if addresses.is_empty() {
-            return Err(OAuthError::InvalidClient);
-        }
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(5));
-        for address in addresses {
-            builder = builder.resolve(host, address);
-        }
-        let response = builder
-            .build()
-            .map_err(|_| OAuthError::Unavailable)?
-            .get(url)
-            .send()
-            .await
-            .map_err(|_| OAuthError::Unavailable)?;
-        if !response.status().is_success()
-            || response.content_length().is_some_and(|n| n > 32 * 1024)
-        {
-            return Err(OAuthError::InvalidClient);
-        }
-        let cache_ttl = response
-            .headers()
-            .get(reqwest::header::CACHE_CONTROL)
-            .and_then(|value| value.to_str().ok())
-            .and_then(cache_max_age)
-            .unwrap_or(300)
-            .min(3_600);
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| OAuthError::Unavailable)?;
-        if bytes.len() > 32 * 1024 {
-            return Err(OAuthError::InvalidClient);
-        }
-        let metadata: Metadata =
-            serde_json::from_slice(&bytes).map_err(|_| OAuthError::InvalidClient)?;
-        if metadata.client_id != client_id
-            || metadata.client_name.trim().is_empty()
-            || metadata.client_name.len() > 120
-            || metadata.redirect_uris.is_empty()
-            || metadata.redirect_uris.len() > 10
-            || metadata
-                .token_endpoint_auth_method
-                .as_deref()
-                .is_some_and(|m| m != "none")
-        {
-            return Err(OAuthError::InvalidClient);
-        }
-        for uri in &metadata.redirect_uris {
-            validate_native_redirect(uri)?;
-        }
-        let timestamp = now();
-        sqlx::query(r#"INSERT INTO oauth_clients (client_id, registration_source, display_name, redirect_uris, created_at, metadata_expires_at)
-            VALUES (?, 'cimd', ?, ?, ?, ?)
-            ON CONFLICT(client_id) DO UPDATE SET display_name = excluded.display_name,
-                redirect_uris = excluded.redirect_uris, metadata_expires_at = excluded.metadata_expires_at"#)
-            .bind(client_id).bind(metadata.client_name).bind(serde_json::to_string(&metadata.redirect_uris).map_err(|_| OAuthError::InvalidClient)?).bind(timestamp).bind(timestamp + cache_ttl).execute(&self.pool).await?;
-        Ok(())
+    pub async fn check_authorization_rate(&self, source: &str) -> Result<(), OAuthError> {
+        super::rate_limit::enforce(
+            &self.pool,
+            "authorize",
+            source,
+            AUTHORIZE_PEER_LIMIT,
+            AUTHORIZE_GLOBAL_LIMIT,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -242,22 +116,23 @@ impl OAuthService {
         state: Option<&str>,
         challenge: &str,
     ) -> Result<String, OAuthError> {
+        if client_id.is_empty()
+            || client_id.len() > 2_048
+            || redirect_uri.is_empty()
+            || redirect_uri.len() > 2_048
+            || resource.len() > 2_048
+            || scope.len() > 128
+            || state.is_some_and(|value| value.len() > 1_024)
+        {
+            return Err(OAuthError::InvalidRequest);
+        }
         if resource != self.config.resource {
             return Err(OAuthError::InvalidTarget);
         }
         if scope != READ_SCOPE {
             return Err(OAuthError::InvalidScope);
         }
-        if challenge.len() < 43
-            || challenge.len() > 128
-            || !challenge
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~'))
-        {
-            return Err(OAuthError::InvalidRequest);
-        }
-        let encoded_challenge =
-            encode_s256_challenge(challenge).map_err(|_| OAuthError::InvalidRequest)?;
+        validate_s256_challenge(challenge).map_err(|_| OAuthError::InvalidRequest)?;
         let redirects: String =
             sqlx::query_scalar("SELECT redirect_uris FROM oauth_clients WHERE client_id = ?")
                 .bind(client_id)
@@ -268,7 +143,7 @@ impl OAuthService {
             serde_json::from_str(&redirects).map_err(|_| OAuthError::InvalidClient)?;
         if !redirects
             .iter()
-            .any(|registered| redirect_matches(registered, redirect_uri))
+            .any(|registered| client::redirect_matches(registered, redirect_uri))
         {
             return Err(OAuthError::InvalidRequest);
         }
@@ -277,7 +152,7 @@ impl OAuthService {
         sqlx::query(r#"INSERT INTO oauth_authorization_requests
             (request_id_hash, browser_binding_hash, client_id, redirect_uri, resource, scopes, state, code_challenge, created_at, expires_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#)
-            .bind(hash(&request_id)).bind(hash(browser_binding)).bind(client_id).bind(redirect_uri).bind(resource).bind(scope).bind(state).bind(encoded_challenge).bind(timestamp).bind(timestamp + REQUEST_TTL).execute(&self.pool).await?;
+            .bind(hash(&request_id)).bind(hash(browser_binding)).bind(client_id).bind(redirect_uri).bind(resource).bind(scope).bind(state).bind(challenge).bind(timestamp).bind(timestamp + REQUEST_TTL).execute(&self.pool).await?;
         sqlx::query("UPDATE oauth_clients SET last_used_at = ? WHERE client_id = ?")
             .bind(timestamp)
             .bind(client_id)
@@ -398,7 +273,7 @@ impl OAuthService {
             || client != form.client_id
             || row.get::<String, _>(1) != redirect
             || form.resource.as_deref() != Some(resource.as_str())
-            || verify_s256(expected, verifier).is_err()
+            || verify_s256(&expected, verifier).is_err()
         {
             return Err(OAuthError::InvalidGrant);
         }
@@ -553,14 +428,35 @@ impl OAuthService {
     pub async fn cleanup(&self) -> Result<(), OAuthError> {
         let timestamp = now();
         sqlx::query("DELETE FROM oauth_authorization_requests WHERE expires_at < ?")
-            .bind(timestamp - 86_400)
+            .bind(timestamp)
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM oauth_access_tokens WHERE expires_at < ?")
             .bind(timestamp)
             .execute(&self.pool)
             .await?;
-        sqlx::query("DELETE FROM oauth_clients WHERE registration_source = 'dcr' AND last_used_at IS NULL AND created_at < ? AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.client_id)").bind(timestamp - 86_400).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM oauth_authorization_codes WHERE expires_at < ?")
+            .bind(timestamp)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_refresh_tokens WHERE expires_at < ?")
+            .bind(timestamp)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_grants WHERE absolute_expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)")
+            .bind(timestamp)
+            .bind(timestamp - 86_400)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_clients WHERE ((registration_source = 'dcr' AND created_at < ?) OR (registration_source = 'cimd' AND metadata_expires_at < ?)) AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.client_id)")
+            .bind(timestamp - 900)
+            .bind(timestamp)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM oauth_rate_limits WHERE window_start < ?")
+            .bind(timestamp - 3_600)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 }
@@ -609,128 +505,11 @@ fn now() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
 }
 
-fn validate_native_redirect(raw: &str) -> Result<(), OAuthError> {
-    let url = Url::parse(raw).map_err(|_| OAuthError::InvalidRequest)?;
-    if url.fragment().is_some() || url.username() != "" || url.password().is_some() {
-        return Err(OAuthError::InvalidRequest);
-    }
-    let host = url.host_str().ok_or(OAuthError::InvalidRequest)?;
-    let loopback = is_loopback_host(host);
-    if url.scheme() != "http" || !loopback {
-        return Err(OAuthError::InvalidRequest);
-    }
-    Ok(())
-}
-
-fn redirect_matches(registered: &str, actual: &str) -> bool {
-    if registered == actual {
-        return true;
-    }
-    let (Ok(a), Ok(b)) = (Url::parse(registered), Url::parse(actual)) else {
-        return false;
-    };
-    let loopback = a.host_str().is_some_and(is_loopback_host);
-    loopback
-        && a.scheme() == b.scheme()
-        && a.host_str() == b.host_str()
-        && a.path() == b.path()
-        && a.query() == b.query()
-}
-
-fn is_public(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => {
-            let [a, b, c, _] = ip.octets();
-            !(ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.is_broadcast()
-                || ip.is_documentation()
-                || ip.is_multicast()
-                || (a == 100 && (64..=127).contains(&b))
-                || (a == 192 && b == 0 && c == 0)
-                || (a == 198 && matches!(b, 18 | 19))
-                || a >= 240)
-        }
-        IpAddr::V6(ip) => {
-            !(ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-                || ip.is_multicast()
-                || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8)
-                || ip
-                    .to_ipv4_mapped()
-                    .is_some_and(|v4| !is_public(IpAddr::V4(v4))))
-        }
-    }
-}
-
-fn is_loopback_host(host: &str) -> bool {
-    host == "localhost"
-        || host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-}
-
-fn cache_max_age(value: &str) -> Option<i64> {
-    value.split(',').map(str::trim).find_map(|directive| {
-        directive
-            .strip_prefix("max-age=")
-            .and_then(|seconds| seconds.parse::<i64>().ok())
-            .filter(|seconds| *seconds >= 0)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
-
-    #[test]
-    fn loopback_redirect_allows_only_port_variation() {
-        let registered = "http://127.0.0.1:1234/oauth/callback?source=codex";
-        assert!(redirect_matches(
-            registered,
-            "http://127.0.0.1:49152/oauth/callback?source=codex"
-        ));
-        assert!(!redirect_matches(
-            registered,
-            "http://localhost:49152/oauth/callback?source=codex"
-        ));
-        assert!(!redirect_matches(
-            registered,
-            "http://127.0.0.1:49152/other?source=codex"
-        ));
-        assert!(!redirect_matches(
-            registered,
-            "http://127.0.0.1:49152/oauth/callback?source=other"
-        ));
-    }
-
-    #[test]
-    fn dcr_redirects_must_be_native_loopback_urls() {
-        assert!(validate_native_redirect("http://[::1]:9876/callback").is_ok());
-        assert!(validate_native_redirect("http://localhost/callback").is_ok());
-        assert!(validate_native_redirect("https://example.com/callback").is_err());
-        assert!(validate_native_redirect("http://127.0.0.1/callback#fragment").is_err());
-    }
-
-    #[test]
-    fn cimd_network_filter_rejects_non_public_addresses() {
-        assert!(!is_public("127.0.0.1".parse().unwrap()));
-        assert!(!is_public("10.0.0.1".parse().unwrap()));
-        assert!(!is_public("::1".parse().unwrap()));
-        assert!(!is_public("::ffff:127.0.0.1".parse().unwrap()));
-        assert!(!is_public("100.64.0.1".parse().unwrap()));
-        assert!(!is_public("2001:db8::1".parse().unwrap()));
-        assert!(is_public("1.1.1.1".parse().unwrap()));
-        assert_eq!(cache_max_age("public, max-age=900"), Some(900));
-        assert_eq!(cache_max_age("no-store"), None);
-    }
+    use url::Url;
 
     #[tokio::test]
     async fn authorization_refresh_replay_and_restart_are_persistent() {
@@ -750,17 +529,21 @@ mod tests {
             enabled: true,
             issuer: Url::parse("http://127.0.0.1:3000").unwrap(),
             resource: "http://127.0.0.1:3000/mcp".into(),
+            secure_cookie: false,
             trusted_metadata_hosts: HashSet::new(),
         };
         let service = OAuthService::new(pool.clone(), config.clone());
         let registration = service
-            .register(RegistrationRequest {
-                client_name: "Test CLI".into(),
-                redirect_uris: vec!["http://127.0.0.1:1234/callback".into()],
-                token_endpoint_auth_method: Some("none".into()),
-                grant_types: vec!["authorization_code".into(), "refresh_token".into()],
-                response_types: vec!["code".into()],
-            })
+            .register(
+                RegistrationRequest {
+                    client_name: "Test CLI".into(),
+                    redirect_uris: vec!["http://127.0.0.1:1234/callback".into()],
+                    token_endpoint_auth_method: Some("none".into()),
+                    grant_types: vec!["authorization_code".into(), "refresh_token".into()],
+                    response_types: vec!["code".into()],
+                },
+                "test-peer",
+            )
             .await
             .unwrap();
         let verifier = "a".repeat(43);
@@ -834,6 +617,91 @@ mod tests {
         assert!(matches!(
             restarted.authenticate(&refreshed.access_token).await,
             Err(OAuthError::InvalidGrant)
+        ));
+
+        sqlx::query("UPDATE oauth_grants SET absolute_expires_at = 1, revoked_at = 1")
+            .execute(&restarted.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE oauth_authorization_requests SET expires_at = 1")
+            .execute(&restarted.pool)
+            .await
+            .unwrap();
+        restarted.cleanup().await.unwrap();
+        for (table, query) in [
+            (
+                "oauth_authorization_requests",
+                "SELECT COUNT(*) FROM oauth_authorization_requests",
+            ),
+            (
+                "oauth_authorization_codes",
+                "SELECT COUNT(*) FROM oauth_authorization_codes",
+            ),
+            (
+                "oauth_access_tokens",
+                "SELECT COUNT(*) FROM oauth_access_tokens",
+            ),
+            (
+                "oauth_refresh_tokens",
+                "SELECT COUNT(*) FROM oauth_refresh_tokens",
+            ),
+            ("oauth_grants", "SELECT COUNT(*) FROM oauth_grants"),
+        ] {
+            let count: i64 = sqlx::query_scalar(query)
+                .fetch_one(&restarted.pool)
+                .await
+                .unwrap();
+            assert_eq!(count, 0, "cleanup left rows in {table}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dynamic_registration_rate_limit_is_enforced() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let service = OAuthService::new(
+            pool,
+            OAuthConfig {
+                enabled: true,
+                issuer: Url::parse("http://127.0.0.1:3000").unwrap(),
+                resource: "http://127.0.0.1:3000/mcp".into(),
+                secure_cookie: false,
+                trusted_metadata_hosts: HashSet::new(),
+            },
+        );
+        for index in 0..REGISTER_PEER_LIMIT {
+            service
+                .register(
+                    RegistrationRequest {
+                        client_name: format!("Client {index}"),
+                        redirect_uris: vec!["http://127.0.0.1/callback".into()],
+                        token_endpoint_auth_method: Some("none".into()),
+                        grant_types: vec!["authorization_code".into()],
+                        response_types: vec!["code".into()],
+                    },
+                    "same-peer",
+                )
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            service
+                .register(
+                    RegistrationRequest {
+                        client_name: "One too many".into(),
+                        redirect_uris: vec!["http://127.0.0.1/callback".into()],
+                        token_endpoint_auth_method: Some("none".into()),
+                        grant_types: vec!["authorization_code".into()],
+                        response_types: vec!["code".into()],
+                    },
+                    "same-peer",
+                )
+                .await,
+            Err(OAuthError::RateLimited)
         ));
     }
 }

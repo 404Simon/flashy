@@ -25,6 +25,7 @@ async fn main() {
     use leptos_axum::{LeptosRoutes, generate_route_list};
     use time::Duration;
     use tower_sessions::{Expiry, SessionManagerLayer};
+    use tower_sessions_core::session_store::ExpiredDeletion;
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     if let Err(e) = dotenvy::dotenv() {
@@ -70,6 +71,7 @@ async fn main() {
         .migrate()
         .await
         .expect("FATAL: Failed to migrate session store");
+    let session_cleanup_store = session_store.clone();
 
     let same_site = std::env::var("SESSION_SAME_SITE")
         .unwrap_or_else(|_| "lax".to_string())
@@ -80,10 +82,7 @@ async fn main() {
         _ => tower_sessions::cookie::SameSite::Lax,
     };
 
-    let secure = std::env::var("SESSION_SECURE")
-        .unwrap_or_else(|_| "false".to_string())
-        .to_lowercase()
-        != "false";
+    let secure = oauth_config.secure_cookie;
 
     let session_layer = SessionManagerLayer::new(session_store)
         .with_expiry(Expiry::OnInactivity(Duration::weeks(1)))
@@ -175,21 +174,48 @@ async fn main() {
         loop {
             tokio::select! {
                 _ = cleanup_shutdown.cancelled() => break,
-                _ = interval.tick() => if let Err(error) = oauth.cleanup().await { tracing::warn!(?error, "OAuth cleanup failed"); },
+                _ = interval.tick() => {
+                    if let Err(error) = oauth.cleanup().await {
+                        tracing::warn!(?error, "OAuth cleanup failed");
+                    }
+                    if let Err(error) = session_cleanup_store.delete_expired().await {
+                        tracing::warn!(?error, "Session cleanup failed");
+                    }
+                },
             }
         }
     });
     let signal_shutdown = shutdown.clone();
-    axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                signal_shutdown.cancel();
-            }
-        })
-        .await
-        .unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        signal_shutdown.cancel();
+    })
+    .await
+    .unwrap();
     shutdown.cancel();
     let _ = cleanup.await;
+}
+
+#[cfg(feature = "ssr")]
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("FATAL: Failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = terminate.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[cfg(not(feature = "ssr"))]

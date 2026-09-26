@@ -13,12 +13,15 @@ pub struct SummaryService {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct SummaryCursor {
     project_id: i64,
+    before_created_at: String,
     before_id: i64,
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ContentCursor {
     summary_id: i64,
     revision: String,
@@ -63,12 +66,7 @@ impl SummaryService {
             ));
         }
         let mut items = self
-            .query(
-                actor,
-                project_id,
-                cursor.map(|c| c.before_id),
-                Some(limit + 1),
-            )
+            .query(actor, project_id, cursor, Some(limit + 1))
             .await?;
         let more = items.len() > limit as usize;
         items.truncate(limit as usize);
@@ -78,6 +76,7 @@ impl SummaryService {
                 .map(|x| {
                     encode_cursor(&SummaryCursor {
                         project_id,
+                        before_created_at: x.created_at.clone(),
                         before_id: x.id,
                     })
                 })
@@ -91,13 +90,20 @@ impl SummaryService {
         &self,
         actor: &Actor,
         project_id: i64,
-        before_id: Option<i64>,
+        before: Option<SummaryCursor>,
         limit: Option<u32>,
     ) -> Result<Vec<SummaryListItem>, ServiceError> {
         let rows = sqlx::query_as::<_, SummaryListItem>(r#"SELECT s.id, s.project_id, s.title, s.description, s.segment_label, s.status, s.created_at
             FROM summaries s JOIN study_projects sp ON sp.id = s.project_id
-            WHERE s.project_id = ? AND sp.user_id = ? AND (? IS NULL OR s.id < ?)
-            ORDER BY s.id DESC LIMIT COALESCE(?, -1)"#).bind(project_id).bind(actor.user_id()).bind(before_id).bind(before_id).bind(limit).fetch_all(&self.pool).await?;
+            WHERE s.project_id = ? AND sp.user_id = ?
+              AND (? IS NULL OR s.created_at < ? OR (s.created_at = ? AND s.id < ?))
+            ORDER BY s.created_at DESC, s.id DESC LIMIT COALESCE(?, -1)"#)
+            .bind(project_id).bind(actor.user_id())
+            .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+            .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+            .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+            .bind(before.as_ref().map(|cursor| cursor.before_id))
+            .bind(limit).fetch_all(&self.pool).await?;
         if rows.is_empty()
             && sqlx::query_scalar::<_, i64>(
                 "SELECT 1 FROM study_projects WHERE id = ? AND user_id = ?",

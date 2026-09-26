@@ -379,8 +379,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn server_advertises_tool_usage_instructions() {
+    #[tokio::test]
+    async fn server_advertises_tool_usage_instructions() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();

@@ -14,8 +14,10 @@ pub struct FileService {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct FileCursor {
     project_id: i64,
+    before_created_at: String,
     before_id: i64,
 }
 
@@ -41,6 +43,7 @@ pub struct FileTextChunk {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct TextCursor {
     file_id: i64,
     revision: String,
@@ -74,13 +77,7 @@ impl FileService {
             ));
         }
         let mut items = self
-            .query(
-                actor,
-                project_id,
-                cursor.map(|c| c.before_id),
-                Some(limit + 1),
-                false,
-            )
+            .query(actor, project_id, cursor, Some(limit + 1), false)
             .await?;
         let has_more = items.len() > limit as usize;
         items.truncate(limit as usize);
@@ -90,6 +87,7 @@ impl FileService {
                 .map(|x| {
                     encode_cursor(&FileCursor {
                         project_id,
+                        before_created_at: x.created_at.clone(),
                         before_id: x.id,
                     })
                 })
@@ -117,7 +115,7 @@ impl FileService {
         &self,
         actor: &Actor,
         project_id: i64,
-        before_id: Option<i64>,
+        before: Option<FileCursor>,
         limit: Option<u32>,
         include_word_count: bool,
     ) -> Result<Vec<ProjectFile>, ServiceError> {
@@ -126,16 +124,28 @@ impl FileService {
                 NULLIF(substr(pf.extracted_text, 1, 400), '') AS text_preview,
                 NULL AS word_count, pf.extracted_text
                 FROM project_files pf JOIN study_projects sp ON sp.id = pf.project_id
-                WHERE pf.project_id = ? AND sp.user_id = ? AND (? IS NULL OR pf.id < ?)
-                ORDER BY pf.id DESC LIMIT COALESCE(?, -1)"#)
-                .bind(project_id).bind(actor.user_id()).bind(before_id).bind(before_id).bind(limit).fetch_all(&self.pool).await?
+                WHERE pf.project_id = ? AND sp.user_id = ?
+                  AND (? IS NULL OR pf.created_at < ? OR (pf.created_at = ? AND pf.id < ?))
+                ORDER BY pf.created_at DESC, pf.id DESC LIMIT COALESCE(?, -1)"#)
+                .bind(project_id).bind(actor.user_id())
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_id))
+                .bind(limit).fetch_all(&self.pool).await?
         } else {
             sqlx::query_as::<_, FileRow>(r#"SELECT pf.id, pf.project_id, pf.original_filename, pf.file_size, pf.processing_status, pf.created_at,
                 NULLIF(substr(pf.extracted_text, 1, 400), '') AS text_preview, NULL AS word_count, NULL AS extracted_text
                 FROM project_files pf JOIN study_projects sp ON sp.id = pf.project_id
-                WHERE pf.project_id = ? AND sp.user_id = ? AND (? IS NULL OR pf.id < ?)
-                ORDER BY pf.id DESC LIMIT COALESCE(?, -1)"#)
-                .bind(project_id).bind(actor.user_id()).bind(before_id).bind(before_id).bind(limit).fetch_all(&self.pool).await?
+                WHERE pf.project_id = ? AND sp.user_id = ?
+                  AND (? IS NULL OR pf.created_at < ? OR (pf.created_at = ? AND pf.id < ?))
+                ORDER BY pf.created_at DESC, pf.id DESC LIMIT COALESCE(?, -1)"#)
+                .bind(project_id).bind(actor.user_id())
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_created_at.as_str()))
+                .bind(before.as_ref().map(|cursor| cursor.before_id))
+                .bind(limit).fetch_all(&self.pool).await?
         };
         if rows.is_empty() {
             let exists = sqlx::query_scalar::<_, i64>(

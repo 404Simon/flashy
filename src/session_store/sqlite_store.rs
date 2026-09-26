@@ -166,3 +166,39 @@ fn is_valid_table_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn expired_deletion_removes_only_expired_sessions() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let store = SqliteStore::new(pool.clone());
+        store.migrate().await.unwrap();
+        sqlx::query("INSERT INTO tower_sessions (id, data, expiry_date) VALUES (?, X'00', ?)")
+            .bind("expired")
+            .bind(OffsetDateTime::now_utc() - time::Duration::hours(1))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tower_sessions (id, data, expiry_date) VALUES (?, X'00', ?)")
+            .bind("live")
+            .bind(OffsetDateTime::now_utc() + time::Duration::hours(1))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        store.delete_expired().await.unwrap();
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM tower_sessions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ids, ["live"]);
+    }
+}
