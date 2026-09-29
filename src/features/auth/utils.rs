@@ -11,6 +11,17 @@ use tower_sessions::Session;
 use super::models::UserSession;
 
 #[cfg(feature = "ssr")]
+#[derive(Debug, thiserror::Error)]
+pub enum PasswordTaskError {
+    #[error("password worker pool is closed")]
+    WorkerPoolClosed(#[from] tokio::sync::AcquireError),
+    #[error("password task failed")]
+    TaskFailed(#[from] tokio::task::JoinError),
+    #[error("bcrypt operation failed")]
+    Bcrypt(#[from] bcrypt::BcryptError),
+}
+
+#[cfg(feature = "ssr")]
 pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
     hash(password, DEFAULT_COST)
 }
@@ -27,33 +38,28 @@ fn password_workers() -> &'static Arc<tokio::sync::Semaphore> {
 }
 
 #[cfg(feature = "ssr")]
-pub async fn verify_password_bounded(password: String, hash: String) -> Result<bool, ()> {
-    let permit = password_workers()
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| ())?;
+pub async fn verify_password_bounded(
+    password: String,
+    hash: String,
+) -> Result<bool, PasswordTaskError> {
+    let permit = password_workers().clone().acquire_owned().await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        verify_password(&password, &hash).unwrap_or(false)
+        verify_password(&password, &hash)
     })
-    .await
-    .map_err(|_| ())
+    .await?
+    .map_err(Into::into)
 }
 
 #[cfg(feature = "ssr")]
-pub async fn hash_password_bounded(password: String) -> Result<String, ()> {
-    let permit = password_workers()
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| ())?;
+pub async fn hash_password_bounded(password: String) -> Result<String, PasswordTaskError> {
+    let permit = password_workers().clone().acquire_owned().await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        hash_password(&password).map_err(|_| ())
+        hash_password(&password)
     })
-    .await
-    .map_err(|_| ())?
+    .await?
+    .map_err(Into::into)
 }
 
 #[cfg(feature = "ssr")]
