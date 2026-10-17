@@ -2908,9 +2908,9 @@ dependencies = [
 
 [[package]]
 name = "markdown2pdf"
-version = "1.6.1"
+version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8388ca6fe67e3f791505f132ad24f5c2dbc94c3f4c2764f9c1c8c1f7c838f098"
+checksum = "689338aa9d69cb2d55acbd956058acc8ada9dad3d21f2052966caeb853af18d9"
 dependencies = [
  "clap",
  "hyphenation",
