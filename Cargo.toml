@@ -99,6 +99,9 @@ ssr = [
     "leptos_router/ssr",
 ]
 
+[profile.dev]
+debug = "line-tables-only"
+
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]
 inherits = "release"
