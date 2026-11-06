@@ -9,7 +9,9 @@ pub async fn download_deck_as_anki(
     axum::extract::State(app_state): axum::extract::State<crate::app_state::AppState>,
     session: tower_sessions::Session,
 ) -> Result<([(axum::http::HeaderName, String); 2], Vec<u8>), axum::http::StatusCode> {
-    use rusqlite::Connection;
+    use sqlx::Connection;
+    use sqlx::SqliteConnection;
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::ZipWriter;
@@ -65,10 +67,20 @@ pub async fn download_deck_as_anki(
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     let db_path = temp_db.path();
 
-    let conn =
-        Connection::open(db_path).map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Anki expects a plain SQLite file, so keep everything in the main database
+    // file (no WAL sidecar) and close the connection before zipping it up.
+    let connect_options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Delete)
+        .synchronous(SqliteSynchronous::Normal);
 
-    anki_builder::create_anki_schema(&conn)
+    let mut conn = SqliteConnection::connect_with(&connect_options)
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    anki_builder::create_anki_schema(&mut conn)
+        .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let timestamp = SystemTime::now()
@@ -81,10 +93,12 @@ pub async fn download_deck_as_anki(
 
     let deck_name = &deck.name;
     let deck_desc = deck.description.as_deref().unwrap_or("");
-    anki_builder::insert_deck(&conn, anki_deck_id, deck_name, deck_desc)
+    anki_builder::insert_deck(&mut conn, anki_deck_id, deck_name, deck_desc)
+        .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    anki_builder::insert_basic_model(&conn, model_id, timestamp)
+    anki_builder::insert_basic_model(&mut conn, model_id, timestamp)
+        .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
     for (idx, card) in cards.iter().enumerate() {
@@ -108,7 +122,7 @@ pub async fn download_deck_as_anki(
         let back_html = markdown_to_html(&card.back);
 
         anki_builder::insert_note(
-            &conn,
+            &mut conn,
             note_id,
             model_id,
             &front_html,
@@ -116,13 +130,17 @@ pub async fn download_deck_as_anki(
             &tags,
             timestamp,
         )
+        .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        anki_builder::insert_card(&conn, card_id, note_id, anki_deck_id, timestamp)
+        anki_builder::insert_card(&mut conn, card_id, note_id, anki_deck_id, timestamp)
+            .await
             .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    drop(conn);
+    conn.close()
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let apkg_buffer = Vec::new();
     let mut zip = ZipWriter::new(std::io::Cursor::new(apkg_buffer));

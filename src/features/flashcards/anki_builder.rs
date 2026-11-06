@@ -1,11 +1,11 @@
-use rusqlite::{Connection, params};
 use serde_json;
+use sqlx::{SqliteConnection, query, raw_sql};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn create_anki_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
+pub async fn create_anki_schema(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
+    raw_sql(
         r#"
         CREATE TABLE col (
             id              integer primary key,
@@ -84,16 +84,18 @@ pub fn create_anki_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX ix_revlog_cid on revlog (cid);
         CREATE INDEX ix_notes_csum on notes (csum);
         "#,
-    )?;
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
-pub fn insert_deck(
-    conn: &Connection,
+pub async fn insert_deck(
+    conn: &mut SqliteConnection,
     deck_id: i64,
     name: &str,
     description: &str,
-) -> Result<(), rusqlite::Error> {
+) -> Result<(), sqlx::Error> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -170,26 +172,24 @@ pub fn insert_deck(
         }
     });
 
-    conn.execute(
-        "INSERT INTO col VALUES(1, ?, ?, 0, 11, 0, 0, 0, ?, ?, ?, ?, '{}')",
-        params![
-            timestamp,
-            timestamp,
-            "{}",
-            "{}",
-            decks_json.to_string(),
-            conf_json.to_string(),
-        ],
-    )?;
+    query("INSERT INTO col VALUES(1, ?, ?, 0, 11, 0, 0, 0, ?, ?, ?, ?, '{}')")
+        .bind(timestamp)
+        .bind(timestamp)
+        .bind("{}")
+        .bind("{}")
+        .bind(decks_json.to_string())
+        .bind(conf_json.to_string())
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
 }
 
-pub fn insert_basic_model(
-    conn: &Connection,
+pub async fn insert_basic_model(
+    conn: &mut SqliteConnection,
     model_id: i64,
     timestamp: i64,
-) -> Result<(), rusqlite::Error> {
+) -> Result<(), sqlx::Error> {
     let model_json = serde_json::json!({
         model_id.to_string(): {
             "id": model_id,
@@ -221,20 +221,23 @@ pub fn insert_basic_model(
     });
 
     // Update col with models
-    conn.execute("UPDATE col SET models = ?", params![model_json.to_string()])?;
+    query("UPDATE col SET models = ?")
+        .bind(model_json.to_string())
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
 }
 
-pub fn insert_note(
-    conn: &Connection,
+pub async fn insert_note(
+    conn: &mut SqliteConnection,
     note_id: i64,
     model_id: i64,
     front: &str,
     back: &str,
     tags: &str,
     timestamp: i64,
-) -> Result<(), rusqlite::Error> {
+) -> Result<(), sqlx::Error> {
     // Generate GUID
     let mut hasher = DefaultHasher::new();
     format!("{}{}{}", front, back, timestamp).hash(&mut hasher);
@@ -248,33 +251,136 @@ pub fn insert_note(
     front.hash(&mut hasher);
     let csum = (hasher.finish() & 0xFFFFFFFF) as i64;
 
-    conn.execute(
-        "INSERT INTO notes VALUES(?, ?, ?, ?, -1, ?, ?, 0, ?, 0, '')",
-        params![
-            note_id,
-            guid,
-            model_id,
-            timestamp / 1000,
-            tags,
-            fields,
-            csum
-        ],
-    )?;
+    query("INSERT INTO notes VALUES(?, ?, ?, ?, -1, ?, ?, 0, ?, 0, '')")
+        .bind(note_id)
+        .bind(guid)
+        .bind(model_id)
+        .bind(timestamp / 1000)
+        .bind(tags)
+        .bind(fields)
+        .bind(csum)
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
 }
 
-pub fn insert_card(
-    conn: &Connection,
+pub async fn insert_card(
+    conn: &mut SqliteConnection,
     card_id: i64,
     note_id: i64,
     deck_id: i64,
     timestamp: i64,
-) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO cards VALUES(?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-        params![card_id, note_id, deck_id, timestamp / 1000],
-    )?;
+) -> Result<(), sqlx::Error> {
+    query("INSERT INTO cards VALUES(?, ?, ?, 0, ?, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')")
+        .bind(card_id)
+        .bind(note_id)
+        .bind(deck_id)
+        .bind(timestamp / 1000)
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Connection;
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+
+    #[test]
+    fn builds_readable_anki_collection() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        runtime.block_on(async {
+            let temp_db = tempfile::NamedTempFile::new().unwrap();
+            let db_path = temp_db.path();
+
+            let options = SqliteConnectOptions::new()
+                .filename(db_path)
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Delete)
+                .synchronous(SqliteSynchronous::Normal);
+
+            let mut conn = SqliteConnection::connect_with(&options).await.unwrap();
+
+            create_anki_schema(&mut conn).await.unwrap();
+            insert_deck(&mut conn, 1_000_000_001, "Deck", "desc")
+                .await
+                .unwrap();
+            insert_basic_model(&mut conn, 1_607_392_319, 1_700_000_000_000)
+                .await
+                .unwrap();
+            insert_note(
+                &mut conn,
+                1_700_000_000_001,
+                1_607_392_319,
+                "front",
+                "back",
+                " tag ",
+                1_700_000_000_000,
+            )
+            .await
+            .unwrap();
+            insert_card(
+                &mut conn,
+                1_700_000_010_001,
+                1_700_000_000_001,
+                1_000_000_001,
+                1_700_000_000_000,
+            )
+            .await
+            .unwrap();
+            conn.close().await.unwrap();
+
+            // Anki expects a single self-contained SQLite file, so no WAL sidecar
+            // may be left behind.
+            let wal_path = format!("{}-wal", db_path.display());
+            assert!(!std::path::Path::new(&wal_path).exists());
+
+            let mut conn = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(db_path)
+                    .read_only(true),
+            )
+            .await
+            .unwrap();
+
+            let decks: String = sqlx::query_scalar("SELECT decks FROM col")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+            assert!(decks.contains("\"Deck\""));
+
+            let models: String = sqlx::query_scalar("SELECT models FROM col")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+            assert!(models.contains("\"Basic\""));
+
+            let notes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+            assert_eq!(notes, 1);
+
+            let cards: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cards")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+            assert_eq!(cards, 1);
+
+            let front: String = sqlx::query_scalar("SELECT flds FROM notes")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+            assert_eq!(front, "front\x1fback");
+
+            conn.close().await.unwrap();
+        });
+    }
 }
