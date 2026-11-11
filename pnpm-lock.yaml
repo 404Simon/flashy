@@ -168,13 +168,13 @@ importers:
     devDependencies:
       tailwindcss:
         specifier: ^4.3.2
-        version: 4.3.3
+        version: 4.3.5
 
 packages:
 
-  tailwindcss@4.3.3:
-    resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
+  tailwindcss@4.3.5:
+    resolution: {integrity: sha512-FcQk9BuffmEHJP2G0XmB2SplU1aLTI7j07Kunk+U74Ny+XiWOtzXz9aujFZ/avntw1e2cOv/3PkgzflQ7gX2vQ==}
 
 snapshots:
 
-  tailwindcss@4.3.3: {}
+  tailwindcss@4.3.5: {}
